@@ -11,15 +11,31 @@ Phase 5 — Scalability means using job queues and background workers so thousan
 
 The first working slice is a Next.js onboarding screen that captures:
 
+- Account creation through Supabase Auth
 - AI categories the user wants in their digest
-- Delivery cadence: daily, weekdays, or weekly
+- Delivery cadence: daily, weekly, as it happens, or bi-weekly
 - Preferred delivery time and timezone
 - Email address for future digest delivery
 
 For now, preferences are stored in browser `localStorage` as `pulseai.preferences.v1`.
 That gives later phases a stable payload shape before a database is introduced.
 
+Account creation uses Supabase Auth for email/password. The password is never
+stored in `public.users`; Supabase stores it securely in `auth.users`. Run
+`supabase/schema.sql` in the Supabase SQL Editor to create a `public.users`
+profile table and trigger. On every signup, the trigger copies `email`,
+`full_name`, and `options` metadata from `auth.users` into `public.users`.
+Step 2 and Step 3 selections are stored in `public.user_preferences` when the
+user finishes setup.
+
 ## Getting Started
+
+Create a Supabase project and copy your public project settings into `.env.local`:
+
+```bash
+NEXT_PUBLIC_SUPABASE_URL=your-project-url
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=your-publishable-key
+```
 
 Install dependencies and run the app:
 

@@ -94,6 +94,20 @@ main {
   width: 100%;
 }
 
+.onboarding-card-loading {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  padding: 32px;
+}
+
+.loading-copy {
+  color: var(--color-text-secondary);
+  font-size: 14px;
+  font-weight: 500;
+}
+
 .onboarding-header {
   align-items: center;
   display: flex;
@@ -250,6 +264,23 @@ main {
   border-color: var(--color-accent);
   box-shadow: 0 0 0 3px var(--color-accent-soft);
   outline: none;
+}
+
+.auth-message {
+  border-radius: var(--border-radius-md);
+  font-size: 13px;
+  line-height: 1.5;
+  margin: 0;
+  padding: 10px 12px;
+}
+
+.auth-message.error {
+  background: rgba(180, 35, 24, 0.1);
+  color: #b42318;
+}
+
+.pulseai-page[data-theme="dark"] .auth-message.error {
+  color: #ffb4ac;
 }
 
 .cat-grid {
@@ -440,9 +471,19 @@ main {
   font-size: 12px;
 }
 
-.signin-note a {
+.signin-note button {
+  background: transparent;
+  border: 0;
   color: var(--color-accent);
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
   text-decoration: none;
+}
+
+.signin-note button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
 }
 
 .sel-count {
@@ -523,6 +564,28 @@ main {
 .dashboard-button {
   justify-content: center;
   width: 100%;
+}
+
+.dashboard-back-button {
+  justify-content: center;
+  width: 100%;
+}
+
+.dashboard-screen {
+  gap: 18px;
+}
+
+.dashboard-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.dashboard-section h3 {
+  color: var(--color-text-primary);
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0;
 }
 
 @media (max-width: 560px) {
