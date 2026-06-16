@@ -425,6 +425,11 @@ main {
   gap: 8px;
 }
 
+.dashboard-shortcut {
+  justify-content: center;
+  width: 100%;
+}
+
 .btn-primary {
   align-items: center;
   background: var(--color-accent);

@@ -5,6 +5,7 @@ import {
   AI_CATEGORIES,
   CADENCE_OPTIONS,
   DEFAULT_PREFERENCES,
+  DeliveryCadence,
   UserPreferences,
 } from "@/lib/preferences";
 import { isSupabaseConfigured, supabase } from "@/lib/supabase";
@@ -21,6 +22,12 @@ type AuthMode = "signup" | "signin";
 type SignupAvailability = {
   email_exists: boolean;
   full_name_exists: boolean;
+};
+type UserPreferenceRow = {
+  categories: string[] | null;
+  cadence: DeliveryCadence | null;
+  delivery_time: string | null;
+  timezone: string | null;
 };
 
 function getStoredPreferences(): UserPreferences {
@@ -71,6 +78,10 @@ function getInitials(fullName: string, email: string) {
     .toUpperCase();
 }
 
+function getDeliveryTime(value: string | null) {
+  return value ? value.slice(0, 5) : DEFAULT_PREFERENCES.deliveryTime;
+}
+
 export function PreferenceOnboarding() {
   const [preferences, setPreferences] =
     useState<UserPreferences>(DEFAULT_PREFERENCES);
@@ -82,6 +93,7 @@ export function PreferenceOnboarding() {
   const [isCreatingAccount, setIsCreatingAccount] = useState(false);
   const [isSigningIn, setIsSigningIn] = useState(false);
   const [isSavingPreferences, setIsSavingPreferences] = useState(false);
+  const [isLoadingDashboard, setIsLoadingDashboard] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
 
@@ -331,6 +343,72 @@ export function PreferenceOnboarding() {
     setCurrentStep(3);
   }
 
+  async function openDashboard() {
+    if (isLoadingDashboard) {
+      return;
+    }
+
+    if (!isSupabaseConfigured || !supabase) {
+      setAuthError(
+        "Supabase is not configured in this browser bundle. Check .env.local for the project URL and public key, then stop and restart npm run dev.",
+      );
+      return;
+    }
+
+    setIsLoadingDashboard(true);
+    setAuthError(null);
+
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError || !user) {
+      setIsLoadingDashboard(false);
+      setAuthError("Sign in before opening your dashboard.");
+      return;
+    }
+
+    const { data: profile, error: profileError } = await supabase
+      .from("users")
+      .select("email,full_name")
+      .eq("id", user.id)
+      .maybeSingle();
+
+    if (profileError) {
+      setIsLoadingDashboard(false);
+      setAuthError(`User lookup failed: ${profileError.message}`);
+      return;
+    }
+
+    const { data: storedPreferences, error: preferencesError } = await supabase
+      .from("user_preferences")
+      .select("categories,cadence,delivery_time,timezone")
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    setIsLoadingDashboard(false);
+
+    if (preferencesError) {
+      setAuthError(`Preference lookup failed: ${preferencesError.message}`);
+      return;
+    }
+
+    const savedPreferences = storedPreferences as UserPreferenceRow | null;
+
+    setUserId(user.id);
+    setPreferences((current) => ({
+      ...current,
+      email: profile?.email ?? user.email ?? current.email,
+      fullName: profile?.full_name ?? current.fullName,
+      categories: savedPreferences?.categories ?? current.categories,
+      cadence: savedPreferences?.cadence ?? current.cadence,
+      deliveryTime: getDeliveryTime(savedPreferences?.delivery_time ?? null),
+      timezone: savedPreferences?.timezone ?? current.timezone,
+    }));
+    setCurrentStep(4);
+  }
+
   function toggleTheme() {
     setTheme((currentTheme) => {
       const nextTheme = currentTheme === "light" ? "dark" : "light";
@@ -518,6 +596,17 @@ export function PreferenceOnboarding() {
             })}
           </div>
 
+          <button
+            className="btn-ghost dashboard-shortcut"
+            disabled={isLoadingDashboard}
+            onClick={openDashboard}
+            type="button"
+          >
+            {isLoadingDashboard ? "Loading dashboard..." : "View dashboard"}
+          </button>
+
+          {authError ? <p className="auth-message error">{authError}</p> : null}
+
           <div className="actions">
             <span className="sel-count">
               <span>{preferences.categories.length}</span> selected
@@ -669,7 +758,7 @@ export function PreferenceOnboarding() {
 
           <button
             className="btn-primary dashboard-button"
-            onClick={() => setCurrentStep(4)}
+            onClick={openDashboard}
             type="button"
           >
             Go to dashboard -&gt;
