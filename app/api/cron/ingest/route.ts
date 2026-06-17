@@ -1,0 +1,1 @@
+export { dynamic, GET, runtime } from "@/app/api/jobs/ingest-content/route";
