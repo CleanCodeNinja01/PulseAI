@@ -19,6 +19,26 @@ create table if not exists public.user_preferences (
     check (cadence in ('daily', 'weekly', 'breaking', 'biweekly'))
 );
 
+create table if not exists public.articles (
+  id uuid primary key default gen_random_uuid(),
+  source text not null,
+  source_type text not null,
+  title text not null,
+  url text not null,
+  doi text,
+  abstract text,
+  authors text[] not null default '{}'::text[],
+  categories text[] not null default '{}'::text[],
+  published_at timestamptz,
+  raw_payload jsonb not null default '{}'::jsonb,
+  url_hash text not null,
+  doi_hash text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint articles_source_type_check
+    check (source_type in ('arxiv', 'rss', 'news'))
+);
+
 create unique index if not exists users_email_unique_idx
   on public.users (lower(email));
 
@@ -26,8 +46,22 @@ create unique index if not exists users_full_name_unique_idx
   on public.users (lower(full_name))
   where full_name is not null and btrim(full_name) <> '';
 
+create unique index if not exists articles_url_hash_unique_idx
+  on public.articles (url_hash);
+
+create unique index if not exists articles_doi_hash_unique_idx
+  on public.articles (doi_hash)
+  where doi_hash is not null;
+
+create index if not exists articles_published_at_idx
+  on public.articles (published_at desc);
+
+create index if not exists articles_categories_idx
+  on public.articles using gin (categories);
+
 alter table public.users enable row level security;
 alter table public.user_preferences enable row level security;
+alter table public.articles enable row level security;
 
 drop policy if exists "Users can read their own profile" on public.users;
 drop policy if exists "Users can insert their own profile" on public.users;
@@ -35,6 +69,7 @@ drop policy if exists "Users can update their own profile" on public.users;
 drop policy if exists "Users can read their own preferences" on public.user_preferences;
 drop policy if exists "Users can insert their own preferences" on public.user_preferences;
 drop policy if exists "Users can update their own preferences" on public.user_preferences;
+drop policy if exists "Authenticated users can read articles" on public.articles;
 
 create policy "Users can read their own profile"
   on public.users
@@ -73,6 +108,12 @@ create policy "Users can update their own preferences"
   to authenticated
   using (auth.uid() = user_id)
   with check (auth.uid() = user_id);
+
+create policy "Authenticated users can read articles"
+  on public.articles
+  for select
+  to authenticated
+  using (true);
 
 create or replace function public.handle_new_user()
 returns trigger
