@@ -1,9 +1,5 @@
-import { PreferenceOnboarding } from "@/components/PreferenceOnboarding";
+import { redirect } from "next/navigation";
 
 export default function Home() {
-  return (
-    <main>
-      <PreferenceOnboarding />
-    </main>
-  );
+  redirect("/auth");
 }

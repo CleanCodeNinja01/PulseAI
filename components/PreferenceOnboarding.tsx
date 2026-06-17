@@ -1,6 +1,15 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
+import {
+  FormEvent,
+  ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import {
   AI_CATEGORIES,
   CADENCE_OPTIONS,
@@ -17,8 +26,10 @@ const CUSTOM_DELIVERY_TIMES = Array.from(
   { length: 24 },
   (_, hour) => `${hour.toString().padStart(2, "0")}:00`,
 );
+
 type Theme = "light" | "dark";
 type AuthMode = "signup" | "signin";
+type RouteStep = "auth" | "interests" | "schedule" | "complete" | "dashboard";
 type SignupAvailability = {
   email_exists: boolean;
   full_name_exists: boolean;
@@ -49,6 +60,10 @@ function getStoredPreferences(): UserPreferences {
     window.localStorage.removeItem(STORAGE_KEY);
     return DEFAULT_PREFERENCES;
   }
+}
+
+function saveStoredPreferences(preferences: UserPreferences) {
+  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(preferences));
 }
 
 function getStoredTheme(): Theme {
@@ -82,29 +97,66 @@ function getDeliveryTime(value: string | null) {
   return value ? value.slice(0, 5) : DEFAULT_PREFERENCES.deliveryTime;
 }
 
-export function PreferenceOnboarding() {
+function getAuthRedirectPath() {
+  if (typeof window === "undefined") {
+    return "/onboarding/interests";
+  }
+
+  const redirectPath = new URLSearchParams(window.location.search).get("redirect");
+
+  return redirectPath?.startsWith("/") ? redirectPath : "/onboarding/interests";
+}
+
+function useStoredPreferenceState() {
   const [preferences, setPreferences] =
     useState<UserPreferences>(DEFAULT_PREFERENCES);
-  const [currentStep, setCurrentStep] = useState(0);
-  const [authMode, setAuthMode] = useState<AuthMode>("signup");
-  const [password, setPassword] = useState("");
-  const [theme, setTheme] = useState<Theme>("light");
-  const [isMounted, setIsMounted] = useState(false);
-  const [isCreatingAccount, setIsCreatingAccount] = useState(false);
-  const [isSigningIn, setIsSigningIn] = useState(false);
-  const [isSavingPreferences, setIsSavingPreferences] = useState(false);
-  const [isLoadingDashboard, setIsLoadingDashboard] = useState(false);
-  const [userId, setUserId] = useState<string | null>(null);
-  const [authError, setAuthError] = useState<string | null>(null);
+  const [isReady, setIsReady] = useState(false);
 
   useEffect(() => {
     queueMicrotask(() => {
       setPreferences(getStoredPreferences());
-      setTheme(getStoredTheme());
-      setIsMounted(true);
+      setIsReady(true);
     });
   }, []);
 
+  const updatePreference = useCallback(function updatePreference<
+    Key extends keyof UserPreferences,
+  >(key: Key, value: UserPreferences[Key]) {
+    setPreferences((current) => {
+      const nextPreferences = {
+        ...current,
+        [key]: value,
+      };
+
+      saveStoredPreferences(nextPreferences);
+      return nextPreferences;
+    });
+  }, []);
+
+  const mergePreferences = useCallback(function mergePreferences(
+    nextPreferences: Partial<UserPreferences>,
+  ) {
+    setPreferences((current) => {
+      const mergedPreferences = {
+        ...current,
+        ...nextPreferences,
+      };
+
+      saveStoredPreferences(mergedPreferences);
+      return mergedPreferences;
+    });
+  }, []);
+
+  return {
+    isReady,
+    mergePreferences,
+    preferences,
+    setPreferences,
+    updatePreference,
+  };
+}
+
+function useSelectedPreferenceLabels(preferences: UserPreferences) {
   const selectedCategoryLabels = useMemo(
     () =>
       AI_CATEGORIES.filter((category) =>
@@ -112,32 +164,168 @@ export function PreferenceOnboarding() {
       ).map((category) => category.label),
     [preferences.categories],
   );
-
   const selectedCadence = CADENCE_OPTIONS.find(
     (option) => option.id === preferences.cadence,
   );
+
+  return {
+    selectedCadence,
+    selectedCategoryLabels,
+  };
+}
+
+function LoadingCard({ label = "Loading PulseAI..." }: { label?: string }) {
+  return (
+    <section className="pulseai-page">
+      <div className="onboarding-card onboarding-card-loading">
+        <div className="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 32 32" role="img">
+            <path d="M4 17h5l3-8 5 16 4-10h7" />
+          </svg>
+        </div>
+        <span className="loading-copy">{label}</span>
+      </div>
+    </section>
+  );
+}
+
+function Progress({ step }: { step: RouteStep }) {
+  const currentStep =
+    step === "auth" ? 0 : step === "interests" ? 1 : step === "schedule" ? 2 : 3;
+
+  return (
+    <div className="progress" aria-label="Onboarding progress">
+      {[0, 1, 2].map((stepIndex) => (
+        <span
+          className={`step-dot ${
+            stepIndex < currentStep
+              ? "done"
+              : stepIndex === currentStep
+                ? "active"
+                : ""
+          }`}
+          key={stepIndex}
+        />
+      ))}
+      <span className="step-label">
+        {currentStep <= 2 ? `Step ${currentStep + 1} of 3` : "Complete"}
+      </span>
+    </div>
+  );
+}
+
+function OnboardingShell({
+  children,
+  step,
+}: {
+  children: ReactNode;
+  step: RouteStep;
+}) {
+  const [theme, setTheme] = useState<Theme>("light");
+  const [isMounted, setIsMounted] = useState(false);
+
+  useEffect(() => {
+    queueMicrotask(() => {
+      setTheme(getStoredTheme());
+      setIsMounted(true);
+    });
+  }, []);
+
+  function toggleTheme() {
+    setTheme((currentTheme) => {
+      const nextTheme = currentTheme === "light" ? "dark" : "light";
+
+      window.localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
+      return nextTheme;
+    });
+  }
+
+  if (!isMounted) {
+    return <LoadingCard />;
+  }
+
+  return (
+    <section className="pulseai-page" data-theme={theme}>
+      <h1 className="sr-only">
+        PulseAI onboarding - route-based sign-up flow with email, category
+        selection, and schedule picker
+      </h1>
+
+      <div className="onboarding-card">
+        <header className="onboarding-header">
+          <div className="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 32 32" role="img">
+              <path d="M4 17h5l3-8 5 16 4-10h7" />
+            </svg>
+          </div>
+          <span className="brand-name">PulseAI</span>
+
+          <button
+            aria-label={`Switch to ${theme === "light" ? "dark" : "light"} mode`}
+            className="theme-toggle"
+            onClick={toggleTheme}
+            type="button"
+          >
+            {theme === "light" ? "Dark" : "Light"}
+          </button>
+
+          <Progress step={step} />
+        </header>
+
+        {children}
+      </div>
+    </section>
+  );
+}
+
+export function ProtectedRoute({ children }: { children: ReactNode }) {
+  const pathname = usePathname();
+  const router = useRouter();
+  const [isCheckingAuth, setIsCheckingAuth] = useState(true);
+
+  useEffect(() => {
+    async function checkAuth() {
+      if (!isSupabaseConfigured || !supabase) {
+        router.replace("/auth");
+        return;
+      }
+
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user) {
+        router.replace(`/auth?redirect=${encodeURIComponent(pathname)}`);
+        return;
+      }
+
+      setIsCheckingAuth(false);
+    }
+
+    void checkAuth();
+  }, [pathname, router]);
+
+  if (isCheckingAuth) {
+    return <LoadingCard label="Checking your session..." />;
+  }
+
+  return children;
+}
+
+export function AuthPage() {
+  const router = useRouter();
+  const { mergePreferences, preferences, updatePreference } =
+    useStoredPreferenceState();
+  const [authMode, setAuthMode] = useState<AuthMode>("signup");
+  const [password, setPassword] = useState("");
+  const [isCreatingAccount, setIsCreatingAccount] = useState(false);
+  const [isSigningIn, setIsSigningIn] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+
   const canContinueAccount =
     preferences.fullName.trim().length > 0 &&
     preferences.email.trim().length > 0 &&
     password.length >= 8;
-  const canContinueCategories = preferences.categories.length > 0;
-  const isCustomDeliveryTime = !PRESET_DELIVERY_TIMES.includes(
-    preferences.deliveryTime,
-  );
-
-  function toggleCategory(categoryId: string) {
-    setPreferences((current) => {
-      const isSelected = current.categories.includes(categoryId);
-      const categories = isSelected
-        ? current.categories.filter((id) => id !== categoryId)
-        : [...current.categories, categoryId];
-
-      return {
-        ...current,
-        categories,
-      };
-    });
-  }
 
   async function createAccount() {
     if (!canContinueAccount || isCreatingAccount) {
@@ -194,18 +382,23 @@ export function PreferenceOnboarding() {
       },
     });
 
+    setIsCreatingAccount(false);
+
     if (error) {
-      setIsCreatingAccount(false);
       setAuthError(error.message);
       return;
     }
 
-    if (data.user) {
-      setUserId(data.user.id);
+    if (!data.session) {
+      setAuthError(
+        "Account created. Confirm your email, then sign in to continue setup.",
+      );
+      setAuthMode("signin");
+      return;
     }
 
-    setIsCreatingAccount(false);
-    setCurrentStep(1);
+    saveStoredPreferences(preferences);
+    router.push("/onboarding/interests");
   }
 
   async function signIn() {
@@ -261,13 +454,11 @@ export function PreferenceOnboarding() {
       return;
     }
 
-    setUserId(profile.id);
-    setPreferences((current) => ({
-      ...current,
+    mergePreferences({
       email: profile.email ?? email,
-      fullName: profile.full_name ?? current.fullName,
-    }));
-    setCurrentStep(1);
+      fullName: profile.full_name ?? preferences.fullName,
+    });
+    router.push(getAuthRedirectPath());
   }
 
   function switchAuthMode(nextMode: AuthMode) {
@@ -286,281 +477,127 @@ export function PreferenceOnboarding() {
     void signIn();
   }
 
-  function updatePreference<Key extends keyof UserPreferences>(
-    key: Key,
-    value: UserPreferences[Key],
-  ) {
-    setPreferences((current) => ({
-      ...current,
-      [key]: value,
-    }));
-  }
+  return (
+    <OnboardingShell step="auth">
+      <form className="screen active" onSubmit={submitAccountForm}>
+        <div>
+          <h2>{authMode === "signup" ? "Create your account" : "Sign in"}</h2>
+          <p className="sub">
+            {authMode === "signup"
+              ? "Get personalized AI advancements delivered to your inbox."
+              : "Enter your email and password to continue setup."}
+          </p>
+        </div>
 
-  async function finishSetup() {
-    if (preferences.categories.length === 0) {
-      return;
-    }
+        <div className="field-stack">
+          {authMode === "signup" ? (
+            <div className="field">
+              <label htmlFor="fullName">Full name</label>
+              <input
+                id="fullName"
+                onChange={(event) =>
+                  updatePreference("fullName", event.target.value)
+                }
+                placeholder="Ada Lovelace"
+                type="text"
+                value={preferences.fullName}
+              />
+            </div>
+          ) : null}
 
-    if (!isSupabaseConfigured || !supabase) {
-      setAuthError(
-        "Supabase is not configured in this browser bundle. Check .env.local for the project URL and public key, then stop and restart npm run dev.",
-      );
-      return;
-    }
+          <div className="field">
+            <label htmlFor="email">Email address</label>
+            <input
+              id="email"
+              onChange={(event) => updatePreference("email", event.target.value)}
+              placeholder="ada@example.com"
+              type="email"
+              value={preferences.email}
+            />
+          </div>
 
-    setIsSavingPreferences(true);
-    setAuthError(null);
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(preferences));
+          <div className="field">
+            <label htmlFor="password">Password</label>
+            <input
+              id="password"
+              onChange={(event) => setPassword(event.target.value)}
+              placeholder="Min. 8 characters"
+              type="password"
+              value={password}
+            />
+          </div>
+        </div>
 
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    const activeUserId = user?.id ?? userId;
+        {authError ? <p className="auth-message error">{authError}</p> : null}
 
-    if (!activeUserId) {
-      setIsSavingPreferences(false);
-      setAuthError(
-        "Account created, but preferences need an authenticated session. Confirm your email, then sign in before finishing setup.",
-      );
-      return;
-    }
+        <div className="actions">
+          <span className="signin-note">
+            {authMode === "signup"
+              ? "Already have an account?"
+              : "Need an account?"}{" "}
+            <button
+              onClick={() =>
+                switchAuthMode(authMode === "signup" ? "signin" : "signup")
+              }
+              type="button"
+            >
+              {authMode === "signup" ? "Sign in" : "Create one"}
+            </button>
+          </span>
+          <button
+            className="btn-primary"
+            disabled={
+              authMode === "signup"
+                ? !canContinueAccount || isCreatingAccount || isSigningIn
+                : isCreatingAccount || isSigningIn
+            }
+            type="submit"
+          >
+            {authMode === "signup"
+              ? isCreatingAccount
+                ? "Creating..."
+                : "Continue"
+              : isSigningIn
+                ? "Signing in..."
+                : "Sign in"}{" "}
+            <span aria-hidden="true">-&gt;</span>
+          </button>
+        </div>
+      </form>
+    </OnboardingShell>
+  );
+}
 
-    const { error } = await supabase.from("user_preferences").upsert({
-      user_id: activeUserId,
-      categories: preferences.categories,
-      cadence: preferences.cadence,
-      delivery_time: preferences.deliveryTime,
-      timezone: preferences.timezone,
+export function InterestsPage() {
+  const router = useRouter();
+  const { isReady, preferences, setPreferences } = useStoredPreferenceState();
+  const [authError, setAuthError] = useState<string | null>(null);
+  const canContinueCategories = preferences.categories.length > 0;
+
+  function toggleCategory(categoryId: string) {
+    setPreferences((current) => {
+      const isSelected = current.categories.includes(categoryId);
+      const categories = isSelected
+        ? current.categories.filter((id) => id !== categoryId)
+        : [...current.categories, categoryId];
+      const nextPreferences = {
+        ...current,
+        categories,
+      };
+
+      saveStoredPreferences(nextPreferences);
+      return nextPreferences;
     });
-
-    setIsSavingPreferences(false);
-
-    if (error) {
-      setAuthError(`Preference sync failed: ${error.message}`);
-      return;
-    }
-
-    setCurrentStep(3);
   }
 
-  async function openDashboard() {
-    if (isLoadingDashboard) {
-      return;
-    }
-
-    if (!isSupabaseConfigured || !supabase) {
-      setAuthError(
-        "Supabase is not configured in this browser bundle. Check .env.local for the project URL and public key, then stop and restart npm run dev.",
-      );
-      return;
-    }
-
-    setIsLoadingDashboard(true);
-    setAuthError(null);
-
-    const {
-      data: { user },
-      error: userError,
-    } = await supabase.auth.getUser();
-
-    if (userError || !user) {
-      setIsLoadingDashboard(false);
-      setAuthError("Sign in before opening your dashboard.");
-      return;
-    }
-
-    const { data: profile, error: profileError } = await supabase
-      .from("users")
-      .select("email,full_name")
-      .eq("id", user.id)
-      .maybeSingle();
-
-    if (profileError) {
-      setIsLoadingDashboard(false);
-      setAuthError(`User lookup failed: ${profileError.message}`);
-      return;
-    }
-
-    const { data: storedPreferences, error: preferencesError } = await supabase
-      .from("user_preferences")
-      .select("categories,cadence,delivery_time,timezone")
-      .eq("user_id", user.id)
-      .maybeSingle();
-
-    setIsLoadingDashboard(false);
-
-    if (preferencesError) {
-      setAuthError(`Preference lookup failed: ${preferencesError.message}`);
-      return;
-    }
-
-    const savedPreferences = storedPreferences as UserPreferenceRow | null;
-
-    setUserId(user.id);
-    setPreferences((current) => ({
-      ...current,
-      email: profile?.email ?? user.email ?? current.email,
-      fullName: profile?.full_name ?? current.fullName,
-      categories: savedPreferences?.categories ?? current.categories,
-      cadence: savedPreferences?.cadence ?? current.cadence,
-      deliveryTime: getDeliveryTime(savedPreferences?.delivery_time ?? null),
-      timezone: savedPreferences?.timezone ?? current.timezone,
-    }));
-    setCurrentStep(4);
-  }
-
-  function toggleTheme() {
-    setTheme((currentTheme) => {
-      const nextTheme = currentTheme === "light" ? "dark" : "light";
-
-      window.localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
-      return nextTheme;
-    });
+  if (!isReady) {
+    return <LoadingCard />;
   }
 
   return (
-    <section className="pulseai-page" data-theme={theme}>
-      <h1 className="sr-only">
-        PulseAI onboarding - three-step sign-up flow with email, category
-        selection, and schedule picker
-      </h1>
-
-      {!isMounted ? (
-        <div className="onboarding-card onboarding-card-loading">
-          <div className="brand-mark" aria-hidden="true">
-            <svg viewBox="0 0 32 32" role="img">
-              <path d="M4 17h5l3-8 5 16 4-10h7" />
-            </svg>
-          </div>
-          <span className="loading-copy">Loading PulseAI...</span>
-        </div>
-      ) : null}
-
-      {isMounted ? (
-      <div className="onboarding-card">
-        <header className="onboarding-header">
-          <div className="brand-mark" aria-hidden="true">
-            <svg viewBox="0 0 32 32" role="img">
-              <path d="M4 17h5l3-8 5 16 4-10h7" />
-            </svg>
-          </div>
-          <span className="brand-name">PulseAI</span>
-
-          <button
-            aria-label={`Switch to ${theme === "light" ? "dark" : "light"} mode`}
-            className="theme-toggle"
-            onClick={toggleTheme}
-            type="button"
-          >
-            {theme === "light" ? "Dark" : "Light"}
-          </button>
-
-          <div className="progress" aria-label="Onboarding progress">
-            {[0, 1, 2].map((step) => (
-              <span
-                className={`step-dot ${
-                  step < currentStep ? "done" : step === currentStep ? "active" : ""
-                }`}
-                key={step}
-              />
-            ))}
-            <span className="step-label">
-              {currentStep <= 2 ? `Step ${currentStep + 1} of 3` : "Complete"}
-            </span>
-          </div>
-        </header>
-
-        <form
-          className={`screen ${currentStep === 0 ? "active" : ""}`}
-          onSubmit={submitAccountForm}
-        >
-          <div>
-            <h2>{authMode === "signup" ? "Create your account" : "Sign in"}</h2>
-            <p className="sub">
-              {authMode === "signup"
-                ? "Get personalized AI advancements delivered to your inbox."
-                : "Enter your email and password to continue setup."}
-            </p>
-          </div>
-
-          <div className="field-stack">
-            {authMode === "signup" ? (
-              <div className="field">
-                <label htmlFor="fullName">Full name</label>
-                <input
-                  id="fullName"
-                  onChange={(event) =>
-                    updatePreference("fullName", event.target.value)
-                  }
-                  placeholder="Ada Lovelace"
-                  type="text"
-                  value={preferences.fullName}
-                />
-              </div>
-            ) : null}
-
-            <div className="field">
-              <label htmlFor="email">Email address</label>
-              <input
-                id="email"
-                onChange={(event) => updatePreference("email", event.target.value)}
-                placeholder="ada@example.com"
-                type="email"
-                value={preferences.email}
-              />
-            </div>
-
-            <div className="field">
-              <label htmlFor="password">Password</label>
-              <input
-                id="password"
-                onChange={(event) => setPassword(event.target.value)}
-                placeholder="Min. 8 characters"
-                type="password"
-                value={password}
-              />
-            </div>
-          </div>
-
-          {authError ? <p className="auth-message error">{authError}</p> : null}
-
-          <div className="actions">
-            <span className="signin-note">
-              {authMode === "signup"
-                ? "Already have an account?"
-                : "Need an account?"}{" "}
-              <button
-                onClick={() =>
-                  switchAuthMode(authMode === "signup" ? "signin" : "signup")
-                }
-                type="button"
-              >
-                {authMode === "signup" ? "Sign in" : "Create one"}
-              </button>
-            </span>
-            <button
-              className="btn-primary"
-              disabled={
-                authMode === "signup"
-                  ? !canContinueAccount || isCreatingAccount || isSigningIn
-                  : isCreatingAccount || isSigningIn
-              }
-              onClick={authMode === "signup" ? createAccount : signIn}
-              type="button"
-            >
-              {authMode === "signup"
-                ? isCreatingAccount
-                  ? "Creating..."
-                  : "Continue"
-                : isSigningIn
-                  ? "Signing in..."
-                  : "Sign in"}{" "}
-              <span aria-hidden="true">-&gt;</span>
-            </button>
-          </div>
-        </form>
-
-        <div className={`screen ${currentStep === 1 ? "active" : ""}`}>
+    <ProtectedRoute>
+      <OnboardingShell step="interests">
+        <div className="screen active">
           <div>
             <h2>Choose your interests</h2>
             <p className="sub">
@@ -598,11 +635,10 @@ export function PreferenceOnboarding() {
 
           <button
             className="btn-ghost dashboard-shortcut"
-            disabled={isLoadingDashboard}
-            onClick={openDashboard}
+            onClick={() => router.push("/dashboard")}
             type="button"
           >
-            {isLoadingDashboard ? "Loading dashboard..." : "View dashboard"}
+            View dashboard
           </button>
 
           {authError ? <p className="auth-message error">{authError}</p> : null}
@@ -612,17 +648,21 @@ export function PreferenceOnboarding() {
               <span>{preferences.categories.length}</span> selected
             </span>
             <div className="button-pair">
-              <button
-                className="btn-ghost"
-                onClick={() => setCurrentStep(0)}
-                type="button"
-              >
+              <Link className="btn-ghost" href="/auth">
                 Back
-              </button>
+              </Link>
               <button
                 className="btn-primary"
                 disabled={!canContinueCategories}
-                onClick={() => setCurrentStep(2)}
+                onClick={() => {
+                  if (!canContinueCategories) {
+                    setAuthError("Choose at least one topic to continue.");
+                    return;
+                  }
+
+                  saveStoredPreferences(preferences);
+                  router.push("/onboarding/schedule");
+                }}
                 type="button"
               >
                 Continue <span aria-hidden="true">-&gt;</span>
@@ -630,8 +670,73 @@ export function PreferenceOnboarding() {
             </div>
           </div>
         </div>
+      </OnboardingShell>
+    </ProtectedRoute>
+  );
+}
 
-        <div className={`screen ${currentStep === 2 ? "active" : ""}`}>
+export function SchedulePage() {
+  const router = useRouter();
+  const { isReady, preferences, updatePreference } = useStoredPreferenceState();
+  const [isSavingPreferences, setIsSavingPreferences] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const isCustomDeliveryTime = !PRESET_DELIVERY_TIMES.includes(
+    preferences.deliveryTime,
+  );
+
+  async function finishSetup() {
+    if (preferences.categories.length === 0) {
+      router.push("/onboarding/interests");
+      return;
+    }
+
+    if (!isSupabaseConfigured || !supabase) {
+      setAuthError(
+        "Supabase is not configured in this browser bundle. Check .env.local for the project URL and public key, then stop and restart npm run dev.",
+      );
+      return;
+    }
+
+    setIsSavingPreferences(true);
+    setAuthError(null);
+    saveStoredPreferences(preferences);
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      setIsSavingPreferences(false);
+      router.push("/auth?redirect=/onboarding/schedule");
+      return;
+    }
+
+    const { error } = await supabase.from("user_preferences").upsert({
+      user_id: user.id,
+      categories: preferences.categories,
+      cadence: preferences.cadence,
+      delivery_time: preferences.deliveryTime,
+      timezone: preferences.timezone,
+    });
+
+    setIsSavingPreferences(false);
+
+    if (error) {
+      setAuthError(`Preference sync failed: ${error.message}`);
+      return;
+    }
+
+    router.push("/onboarding/complete");
+  }
+
+  if (!isReady) {
+    return <LoadingCard />;
+  }
+
+  return (
+    <ProtectedRoute>
+      <OnboardingShell step="schedule">
+        <div className="screen active">
           <div>
             <h2>When should we send it?</h2>
             <p className="sub">
@@ -703,13 +808,9 @@ export function PreferenceOnboarding() {
           {authError ? <p className="auth-message error">{authError}</p> : null}
 
           <div className="actions">
-            <button
-              className="btn-ghost"
-              onClick={() => setCurrentStep(1)}
-              type="button"
-            >
+            <Link className="btn-ghost" href="/onboarding/interests">
               Back
-            </button>
+            </Link>
             <button
               className="btn-primary"
               disabled={isSavingPreferences}
@@ -721,10 +822,24 @@ export function PreferenceOnboarding() {
             </button>
           </div>
         </div>
+      </OnboardingShell>
+    </ProtectedRoute>
+  );
+}
 
-        <div
-          className={`screen success-screen ${currentStep === 3 ? "active" : ""}`}
-        >
+export function CompletePage() {
+  const { isReady, preferences } = useStoredPreferenceState();
+  const { selectedCadence, selectedCategoryLabels } =
+    useSelectedPreferenceLabels(preferences);
+
+  if (!isReady) {
+    return <LoadingCard />;
+  }
+
+  return (
+    <ProtectedRoute>
+      <OnboardingShell step="complete">
+        <div className="screen active success-screen">
           <div className="success-icon" aria-hidden="true">
             {getInitials(preferences.fullName, preferences.email)}
           </div>
@@ -756,24 +871,122 @@ export function PreferenceOnboarding() {
             </div>
           </div>
 
-          <button
-            className="btn-primary dashboard-button"
-            onClick={openDashboard}
-            type="button"
-          >
+          <Link className="btn-primary dashboard-button" href="/dashboard">
             Go to dashboard -&gt;
-          </button>
+          </Link>
         </div>
+      </OnboardingShell>
+    </ProtectedRoute>
+  );
+}
 
-        <div
-          className={`screen dashboard-screen ${currentStep === 4 ? "active" : ""}`}
-        >
+export function DashboardPage() {
+  const { isReady, mergePreferences, preferences } = useStoredPreferenceState();
+  const { selectedCadence, selectedCategoryLabels } =
+    useSelectedPreferenceLabels(preferences);
+  const [isLoadingDashboard, setIsLoadingDashboard] = useState(true);
+  const [authError, setAuthError] = useState<string | null>(null);
+
+  useEffect(() => {
+    async function loadDashboard() {
+      if (!isSupabaseConfigured || !supabase) {
+        setAuthError(
+          "Supabase is not configured in this browser bundle. Check .env.local for the project URL and public key, then stop and restart npm run dev.",
+        );
+        setIsLoadingDashboard(false);
+        return;
+      }
+
+      const {
+        data: { user },
+        error: userError,
+      } = await supabase.auth.getUser();
+
+      if (userError || !user) {
+        setAuthError("Sign in before opening your dashboard.");
+        setIsLoadingDashboard(false);
+        return;
+      }
+
+      const { data: profile, error: profileError } = await supabase
+        .from("users")
+        .select("email,full_name")
+        .eq("id", user.id)
+        .maybeSingle();
+
+      if (profileError) {
+        setAuthError(`User lookup failed: ${profileError.message}`);
+        setIsLoadingDashboard(false);
+        return;
+      }
+
+      const { data: storedPreferences, error: preferencesError } = await supabase
+        .from("user_preferences")
+        .select("categories,cadence,delivery_time,timezone")
+        .eq("user_id", user.id)
+        .maybeSingle();
+
+      if (preferencesError) {
+        setAuthError(`Preference lookup failed: ${preferencesError.message}`);
+        setIsLoadingDashboard(false);
+        return;
+      }
+
+      const savedPreferences = storedPreferences as UserPreferenceRow | null;
+
+      const nextPreferences: Partial<UserPreferences> = {};
+
+      if (profile?.email || user.email) {
+        nextPreferences.email = profile?.email ?? user.email ?? "";
+      }
+
+      if (profile?.full_name) {
+        nextPreferences.fullName = profile.full_name;
+      }
+
+      if (savedPreferences?.categories) {
+        nextPreferences.categories = savedPreferences.categories;
+      }
+
+      if (savedPreferences?.cadence) {
+        nextPreferences.cadence = savedPreferences.cadence;
+      }
+
+      if (savedPreferences?.delivery_time) {
+        nextPreferences.deliveryTime = getDeliveryTime(
+          savedPreferences.delivery_time,
+        );
+      }
+
+      if (savedPreferences?.timezone) {
+        nextPreferences.timezone = savedPreferences.timezone;
+      }
+
+      mergePreferences(nextPreferences);
+      setIsLoadingDashboard(false);
+    }
+
+    if (isReady) {
+      void loadDashboard();
+    }
+  }, [isReady, mergePreferences]);
+
+  if (!isReady || isLoadingDashboard) {
+    return <LoadingCard label="Loading dashboard..." />;
+  }
+
+  return (
+    <ProtectedRoute>
+      <OnboardingShell step="dashboard">
+        <div className="screen active dashboard-screen">
           <div>
             <h2>Dashboard</h2>
             <p className="sub">
               Your PulseAI account and digest preferences are ready.
             </p>
           </div>
+
+          {authError ? <p className="auth-message error">{authError}</p> : null}
 
           <div className="dashboard-section">
             <h3>Account</h3>
@@ -817,16 +1030,11 @@ export function PreferenceOnboarding() {
             </div>
           </div>
 
-          <button
-            className="btn-ghost dashboard-back-button"
-            onClick={() => setCurrentStep(3)}
-            type="button"
-          >
+          <Link className="btn-ghost dashboard-back-button" href="/onboarding/complete">
             Back
-          </button>
+          </Link>
         </div>
-      </div>
-      ) : null}
-    </section>
+      </OnboardingShell>
+    </ProtectedRoute>
   );
 }
