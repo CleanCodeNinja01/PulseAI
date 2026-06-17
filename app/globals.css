@@ -540,6 +540,19 @@ main {
   width: 100%;
 }
 
+.dashboard-section-header {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.dashboard-edit-link {
+  flex-shrink: 0;
+  height: 34px;
+  padding: 0 12px;
+}
+
 .btn-primary {
   align-items: center;
   background: var(--color-accent);

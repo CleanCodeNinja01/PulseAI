@@ -1083,7 +1083,12 @@ export function DashboardPage() {
           </div>
 
           <div className="dashboard-section">
-            <h3>Preferences</h3>
+            <div className="dashboard-section-header">
+              <h3>Preferences</h3>
+              <Link className="btn-ghost dashboard-edit-link" href="/onboarding/interests">
+                Edit interests
+              </Link>
+            </div>
             <div className="confirm-list">
               <div className="confirm-row">
                 <span className="ck">Topics</span>
