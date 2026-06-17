@@ -7,12 +7,15 @@ export type AiCategory = {
 };
 
 export type DeliveryCadence = "daily" | "weekly" | "breaking" | "biweekly";
+export type DeliveryMode = "scheduled" | "realtime";
 
 export type UserPreferences = {
   fullName: string;
   categories: string[];
   cadence: DeliveryCadence;
+  deliveryMode: DeliveryMode;
   deliveryTime: string;
+  maxAlertsPerDay: number;
   timezone: string;
   email: string;
 };
@@ -91,6 +94,7 @@ export const AI_CATEGORIES: AiCategory[] = [
     label: "Open source AI",
     description: "Models and tools",
     icon: "OS",
+    isHot: true,
   },
 ];
 
@@ -125,7 +129,9 @@ export const DEFAULT_PREFERENCES: UserPreferences = {
   fullName: "",
   categories: ["llms", "generative-ai", "agents"],
   cadence: "daily",
+  deliveryMode: "scheduled",
   deliveryTime: "08:00",
+  maxAlertsPerDay: 3,
   timezone: "UTC",
   email: "",
 };

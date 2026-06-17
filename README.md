@@ -5,7 +5,7 @@ Phase 1 — User onboarding & preferences is where users select AI categories (N
 Phase 2 — Content pipeline involves fetching AI news from sources like arXiv, RSS feeds, and news APIs, then filtering by the user's selected categories.
 Phase 3 — AI summarization uses Claude (or another LLM) to condense each article and generate a personalized "why this matters" insight tailored to the user's interests.
 Phase 4 — Email automation assembles the digest and sends it on the user's chosen schedule via Mailjet.
-Phase 5 — Scalability means using job queues and background workers so thousands of users can get personalized digests without bottlenecks.
+Phase 5 — Breaking AI alerts flags major AI updates and can notify users right away when a new article matches their selected categories or watchlist.
 
 ## Phase 1 App
 
@@ -14,7 +14,8 @@ The first working slice is a route-based Next.js onboarding flow that captures:
 - Account creation through Supabase Auth
 - AI categories the user wants in their digest
 - Delivery cadence: daily, weekly, as it happens, or bi-weekly
-- Preferred delivery time and timezone
+- Preferred delivery time and timezone for scheduled digests
+- Maximum daily alert cap for as-it-happens delivery
 - Email address for future digest delivery
 
 Implemented routes:
@@ -163,7 +164,8 @@ Implementation steps:
    - Implemented route: `GET /api/jobs/deliver-digests`.
    - Protect it with `Authorization: Bearer $CRON_SECRET`.
 5. Add unsubscribe support from day one.
-   - Implemented route: `GET /api/unsubscribe?token=...`.
+   - Implemented page: `GET /unsubscribe?token=...`.
+   - API fallback: `GET /api/unsubscribe?token=...`.
    - Every digest email includes this link.
 6. Schedule delivery.
    - `vercel.json` runs ingestion daily, summarization after ingestion, and
@@ -184,6 +186,67 @@ for each attempted email.
 For safer local testing, set `EMAIL_DELIVERY_MAX_USERS` and
 `EMAIL_DIGEST_MAX_ITEMS` to low values like `1` and `2`.
 
+## Phase 5 Breaking AI Alerts
+
+Phase 5 starts by storing alert metadata on each article so the app can
+distinguish routine digest content from major updates worth sending right away.
+
+Implemented schema fields on `public.articles`:
+
+1. `importance_score`: integer from `0` to `10`; higher means more important.
+2. `is_breaking`: boolean flag for major updates that may trigger immediate alerts.
+3. `breaking_reason`: short explanation for why the article is breaking.
+4. `matched_entities`: text array for model/company/product names like `Fable 5`, `Claude`, `OpenAI`, `Gemini`, or `Llama`.
+
+Indexes support fast queries for breaking items and entity matching:
+
+1. `articles_breaking_importance_idx`
+2. `articles_matched_entities_idx`
+
+Implemented alert preference fields on `public.user_preferences`:
+
+1. `breaking_alerts_enabled`: lets a user opt into immediate alert emails.
+2. `alert_threshold`: minimum importance score from `1` to `10`; default is `8`.
+3. `delivery_mode`: `scheduled` for digest delivery or `realtime` for as-it-happens alerts.
+4. `max_alerts_per_day`: caps realtime alerts so users are not spammed.
+5. `watchlist_keywords`: user-specific model, company, and topic keywords like `Fable 5`, `Claude`, `OpenAI`, or `agents`.
+
+Implemented classifier helper:
+
+1. File: `lib/classification/claude.ts`.
+2. Function: `classifyArticleForAlerts(article)`.
+3. Returns `importanceScore`, `isBreaking`, `breakingReason`, `matchedEntities`, model, and token counts.
+4. Uses Claude Haiku by default through `ANTHROPIC_MODEL` / `ANTHROPIC_API_KEY`.
+
+Implemented breaking-alert email job:
+
+1. Route: `GET /api/jobs/send-breaking-alerts`.
+2. Protect it with `Authorization: Bearer $CRON_SECRET`.
+3. It scans users with `breaking_alerts_enabled = true`.
+4. It only sends for `delivery_mode = realtime`.
+5. It finds `public.articles.is_breaking = true` where `importance_score >= alert_threshold`.
+6. It matches by selected categories, `watchlist_keywords`, `matched_entities`, title, abstract, and breaking reason.
+7. It caps sends by `max_alerts_per_day`.
+8. It sends one short urgent Mailjet email per matched article.
+9. It upserts `public.user_article_reads` as `status = delivered` so the same breaking alert is not sent repeatedly.
+10. `vercel.json` schedules this route every 15 minutes.
+
+To test breaking alerts locally:
+
+```bash
+curl -H "Authorization: Bearer $CRON_SECRET" \
+  http://localhost:3000/api/jobs/send-breaking-alerts
+```
+
+For safer local testing, set `BREAKING_ALERT_MAX_USERS` and
+`BREAKING_ALERT_MAX_ARTICLES_PER_USER` to low values like `1` and `1`.
+
+Next Phase 5 steps:
+
+1. Add a classification job that fills article alert metadata after ingestion.
+2. Wire onboarding/dashboard UI so users can edit breaking alert settings.
+3. Add an admin/test view to inspect breaking-alert candidates before sending.
+
 ## Work Done So Far
 
 1. Project setup: Next.js app, TypeScript, ESLint, global styling, favicon, and LAN hot reload support.
@@ -201,7 +264,12 @@ For safer local testing, set `EMAIL_DELIVERY_MAX_USERS` and
 13. Phase 3 Claude client: `lib/summarization/claude.ts` is implemented as a server-only wrapper.
 14. Phase 3 summarization route: `/api/jobs/summarize-content` matches unread articles, calls Claude in batches, stores summaries, and marks user article state.
 15. Phase 4 email delivery: `/api/jobs/deliver-digests` sends due digest emails through Mailjet and marks items as delivered.
-16. Phase 4 unsubscribe route: `/api/unsubscribe` disables future digest emails with a per-user token.
+16. Phase 4 unsubscribe page: `/unsubscribe` disables future digest and alert emails with a per-user token.
+17. Phase 5 alert metadata: `public.articles` now stores importance score, breaking flag, breaking reason, and matched entities.
+18. Phase 5 alert preferences: `public.user_preferences` now stores breaking alert opt-in, alert threshold, and watchlist keywords.
+19. Phase 5 classifier helper: `lib/classification/claude.ts` can classify articles for breaking-alert metadata.
+20. Phase 5 breaking alert route: `/api/jobs/send-breaking-alerts` sends urgent emails for high-importance matching articles.
+21. Schedule UX: “As it happens” switches from a time picker to an immediate-alert explainer and max-alerts-per-day control.
 
 ## Missing Flow / Next Steps
 
@@ -214,7 +282,9 @@ For safer local testing, set `EMAIL_DELIVERY_MAX_USERS` and
 7. Add Phase 3 tables for summaries and per-user article delivery/read tracking.
 8. Test Phase 3 summarization with a real `ANTHROPIC_API_KEY` and low local limits.
 9. Test Phase 4 email delivery with a verified Mailjet sender and low local limits.
-10. Add observability for cron runs, including persisted job logs, source failures, and inserted/skipped counts.
+10. Implement Phase 5 classification job to populate article alert metadata.
+11. Wire onboarding/dashboard UI for breaking-alert preferences.
+12. Add observability for cron runs, including persisted job logs, source failures, and inserted/skipped counts.
 
 ## Getting Started
 
@@ -238,6 +308,8 @@ DIGEST_FROM_EMAIL=PulseAI <digest@your-domain.com>
 APP_URL=http://localhost:3000
 EMAIL_DELIVERY_MAX_USERS=optional-local-email-user-limit
 EMAIL_DIGEST_MAX_ITEMS=optional-local-digest-item-limit
+BREAKING_ALERT_MAX_USERS=optional-local-breaking-user-limit
+BREAKING_ALERT_MAX_ARTICLES_PER_USER=optional-local-breaking-article-limit
 ```
 
 Install dependencies and run the app:

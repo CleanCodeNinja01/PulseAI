@@ -14,12 +14,23 @@ create table if not exists public.user_preferences (
   user_id uuid primary key references auth.users(id) on delete cascade,
   categories text[] not null default '{}'::text[],
   cadence text not null,
+  delivery_mode text not null default 'scheduled',
   delivery_time time not null,
   timezone text not null default 'UTC',
+  breaking_alerts_enabled boolean not null default false,
+  alert_threshold integer not null default 8,
+  max_alerts_per_day integer not null default 3,
+  watchlist_keywords text[] not null default '{}'::text[],
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint user_preferences_cadence_check
-    check (cadence in ('daily', 'weekly', 'breaking', 'biweekly'))
+    check (cadence in ('daily', 'weekly', 'breaking', 'biweekly')),
+  constraint user_preferences_delivery_mode_check
+    check (delivery_mode in ('scheduled', 'realtime')),
+  constraint user_preferences_alert_threshold_check
+    check (alert_threshold between 1 and 10),
+  constraint user_preferences_max_alerts_per_day_check
+    check (max_alerts_per_day between 1 and 25)
 );
 
 create table if not exists public.articles (
@@ -32,6 +43,10 @@ create table if not exists public.articles (
   abstract text,
   authors text[] not null default '{}'::text[],
   categories text[] not null default '{}'::text[],
+  importance_score integer not null default 0,
+  is_breaking boolean not null default false,
+  breaking_reason text,
+  matched_entities text[] not null default '{}'::text[],
   published_at timestamptz,
   raw_payload jsonb not null default '{}'::jsonb,
   url_hash text not null,
@@ -39,7 +54,9 @@ create table if not exists public.articles (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint articles_source_type_check
-    check (source_type in ('arxiv', 'rss', 'news'))
+    check (source_type in ('arxiv', 'rss', 'news')),
+  constraint articles_importance_score_check
+    check (importance_score between 0 and 10)
 );
 
 create table if not exists public.article_summaries (
@@ -84,6 +101,47 @@ alter table public.users
   add column if not exists email_unsubscribed_at timestamptz,
   add column if not exists last_digest_sent_at timestamptz;
 
+alter table public.user_preferences
+  add column if not exists breaking_alerts_enabled boolean not null default false,
+  add column if not exists alert_threshold integer not null default 8,
+  add column if not exists delivery_mode text not null default 'scheduled',
+  add column if not exists max_alerts_per_day integer not null default 3,
+  add column if not exists watchlist_keywords text[] not null default '{}'::text[];
+
+alter table public.user_preferences
+  drop constraint if exists user_preferences_delivery_mode_check;
+
+alter table public.user_preferences
+  add constraint user_preferences_delivery_mode_check
+    check (delivery_mode in ('scheduled', 'realtime'));
+
+alter table public.user_preferences
+  drop constraint if exists user_preferences_alert_threshold_check;
+
+alter table public.user_preferences
+  add constraint user_preferences_alert_threshold_check
+    check (alert_threshold between 1 and 10);
+
+alter table public.user_preferences
+  drop constraint if exists user_preferences_max_alerts_per_day_check;
+
+alter table public.user_preferences
+  add constraint user_preferences_max_alerts_per_day_check
+    check (max_alerts_per_day between 1 and 25);
+
+alter table public.articles
+  add column if not exists importance_score integer not null default 0,
+  add column if not exists is_breaking boolean not null default false,
+  add column if not exists breaking_reason text,
+  add column if not exists matched_entities text[] not null default '{}'::text[];
+
+alter table public.articles
+  drop constraint if exists articles_importance_score_check;
+
+alter table public.articles
+  add constraint articles_importance_score_check
+    check (importance_score between 0 and 10);
+
 create unique index if not exists users_email_unique_idx
   on public.users (lower(email));
 
@@ -106,6 +164,18 @@ create index if not exists articles_published_at_idx
 
 create index if not exists articles_categories_idx
   on public.articles using gin (categories);
+
+create index if not exists articles_breaking_importance_idx
+  on public.articles (is_breaking, importance_score desc, published_at desc);
+
+create index if not exists articles_matched_entities_idx
+  on public.articles using gin (matched_entities);
+
+create index if not exists user_preferences_watchlist_keywords_idx
+  on public.user_preferences using gin (watchlist_keywords);
+
+create index if not exists user_preferences_delivery_mode_idx
+  on public.user_preferences (delivery_mode, breaking_alerts_enabled);
 
 create unique index if not exists article_summaries_user_article_unique_idx
   on public.article_summaries (user_id, article_id);

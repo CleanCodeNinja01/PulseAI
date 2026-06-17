@@ -9,6 +9,10 @@
       "schedule": "30 6 * * *"
     },
     {
+      "path": "/api/jobs/send-breaking-alerts",
+      "schedule": "*/15 * * * *"
+    },
+    {
       "path": "/api/jobs/deliver-digests",
       "schedule": "0 * * * *"
     }

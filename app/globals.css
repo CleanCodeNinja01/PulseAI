@@ -44,6 +44,48 @@ main {
   min-height: 100vh;
 }
 
+.unsubscribe-page {
+  align-items: center;
+  background: var(--color-page-background);
+  display: flex;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 32px 20px;
+}
+
+.unsubscribe-card {
+  background: var(--color-background-primary);
+  border: 0.5px solid var(--color-border-tertiary);
+  border-radius: var(--border-radius-xl);
+  box-shadow: 0 24px 80px var(--color-shadow);
+  max-width: 560px;
+  padding: 32px;
+  width: 100%;
+}
+
+.unsubscribe-brand {
+  color: var(--color-accent);
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  margin: 0 0 10px;
+  text-transform: uppercase;
+}
+
+.unsubscribe-card h1 {
+  color: var(--color-text-primary);
+  font-size: 28px;
+  line-height: 1.2;
+  margin: 0 0 12px;
+}
+
+.unsubscribe-card p:last-child {
+  color: var(--color-text-secondary);
+  font-size: 15px;
+  line-height: 1.6;
+  margin: 0;
+}
+
 .pulseai-page {
   align-items: center;
   background: var(--color-page-background);
@@ -235,6 +277,12 @@ main {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.realtime-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
 .field {
   display: flex;
   flex-direction: column;
@@ -245,6 +293,37 @@ main {
   color: var(--color-text-secondary);
   font-size: 13px;
   font-weight: 500;
+}
+
+.field-label {
+  color: var(--color-text-secondary);
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+  margin-bottom: 8px;
+}
+
+.info-box {
+  align-items: flex-start;
+  background: var(--color-accent-soft);
+  border-radius: var(--border-radius-md);
+  display: flex;
+  gap: 10px;
+  padding: 12px 14px;
+}
+
+.info-icon {
+  color: var(--color-accent);
+  flex-shrink: 0;
+  font-size: 16px;
+  line-height: 1.4;
+}
+
+.info-box p {
+  color: var(--color-accent-strong);
+  font-size: 13px;
+  line-height: 1.5;
+  margin: 0;
 }
 
 .field input,
@@ -411,6 +490,37 @@ main {
   color: var(--color-text-secondary);
   display: block;
   font-size: 12px;
+}
+
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.chip {
+  background: var(--color-background-primary);
+  border: 0.5px solid var(--color-border-tertiary);
+  border-radius: 999px;
+  color: var(--color-text-primary);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 8px 14px;
+  transition:
+    background 0.15s,
+    border-color 0.15s,
+    color 0.15s;
+}
+
+.chip:hover {
+  border-color: var(--color-border-secondary);
+}
+
+.chip.selected {
+  background: var(--color-accent-soft);
+  border-color: var(--color-accent);
+  color: var(--color-accent-strong);
+  font-weight: 500;
 }
 
 .actions {

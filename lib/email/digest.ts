@@ -5,6 +5,7 @@ import { supabaseAdmin } from "@/lib/supabase-server";
 type UserPreferenceRow = {
   user_id: string;
   cadence: "daily" | "weekly" | "breaking" | "biweekly";
+  delivery_mode: "scheduled" | "realtime";
   delivery_time: string;
   timezone: string;
 };
@@ -199,7 +200,7 @@ function getUnsubscribeUrl(user: UserRow) {
   const appUrl = getRequiredEnv("APP_URL").replace(/\/$/, "");
   const token = encodeURIComponent(user.email_unsubscribe_token);
 
-  return `${appUrl}/api/unsubscribe?token=${token}`;
+  return `${appUrl}/unsubscribe?token=${token}`;
 }
 
 function renderDigestHtml(user: UserRow, items: DigestItem[]) {
@@ -311,7 +312,8 @@ async function getDueDigestUsers(limit: number) {
 
   const { data: preferences, error: preferencesError } = await supabaseAdmin
     .from("user_preferences")
-    .select("user_id,cadence,delivery_time,timezone")
+    .select("user_id,cadence,delivery_mode,delivery_time,timezone")
+    .eq("delivery_mode", "scheduled")
     .limit(limit * 2);
 
   if (preferencesError) {

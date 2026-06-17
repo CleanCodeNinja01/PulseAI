@@ -15,6 +15,7 @@ import {
   CADENCE_OPTIONS,
   DEFAULT_PREFERENCES,
   DeliveryCadence,
+  DeliveryMode,
   UserPreferences,
 } from "@/lib/preferences";
 import { isSupabaseConfigured, supabase } from "@/lib/supabase";
@@ -26,6 +27,7 @@ const CUSTOM_DELIVERY_TIMES = Array.from(
   { length: 24 },
   (_, hour) => `${hour.toString().padStart(2, "0")}:00`,
 );
+const ALERT_CAP_OPTIONS = [1, 3, 5];
 
 type Theme = "light" | "dark";
 type AuthMode = "signup" | "signin";
@@ -37,7 +39,9 @@ type SignupAvailability = {
 type UserPreferenceRow = {
   categories: string[] | null;
   cadence: DeliveryCadence | null;
+  delivery_mode: DeliveryMode | null;
   delivery_time: string | null;
+  max_alerts_per_day: number | null;
   timezone: string | null;
 };
 
@@ -680,6 +684,7 @@ export function SchedulePage() {
   const { isReady, preferences, updatePreference } = useStoredPreferenceState();
   const [isSavingPreferences, setIsSavingPreferences] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  const isRealtimeMode = preferences.deliveryMode === "realtime";
   const isCustomDeliveryTime = !PRESET_DELIVERY_TIMES.includes(
     preferences.deliveryTime,
   );
@@ -715,7 +720,10 @@ export function SchedulePage() {
       user_id: user.id,
       categories: preferences.categories,
       cadence: preferences.cadence,
+      delivery_mode: preferences.deliveryMode,
       delivery_time: preferences.deliveryTime,
+      breaking_alerts_enabled: preferences.deliveryMode === "realtime",
+      max_alerts_per_day: preferences.maxAlertsPerDay,
       timezone: preferences.timezone,
     });
 
@@ -753,7 +761,13 @@ export function SchedulePage() {
                   aria-pressed={isSelected}
                   className={`sched-card ${isSelected ? "selected" : ""}`}
                   key={option.id}
-                  onClick={() => updatePreference("cadence", option.id)}
+                  onClick={() => {
+                    const deliveryMode =
+                      option.id === "breaking" ? "realtime" : "scheduled";
+
+                    updatePreference("cadence", option.id);
+                    updatePreference("deliveryMode", deliveryMode);
+                  }}
                   type="button"
                 >
                   <span className="sched-title">{option.label}</span>
@@ -763,47 +777,88 @@ export function SchedulePage() {
             })}
           </div>
 
-          <div className="delivery-time-grid">
-            <div className="field">
-              <label htmlFor="deliveryTime">Preferred delivery time</label>
-              <select
-                id="deliveryTime"
-                onChange={(event) => {
-                  const nextTime = event.target.value;
+          {isRealtimeMode ? (
+            <div className="realtime-settings">
+              <div className="info-box">
+                <span aria-hidden="true" className="info-icon">
+                  ⚡
+                </span>
+                <p>
+                  Real-time alerts arrive within minutes of a major AI
+                  development. There is no fixed delivery time.
+                </p>
+              </div>
 
-                  updatePreference(
-                    "deliveryTime",
-                    nextTime === "custom" ? "09:00" : nextTime,
-                  );
-                }}
-                value={isCustomDeliveryTime ? "custom" : preferences.deliveryTime}
-              >
-                <option value="08:00">8:00 AM - morning briefing</option>
-                <option value="12:00">12:00 PM - lunch digest</option>
-                <option value="18:00">6:00 PM - evening wrap-up</option>
-                <option value="custom">Custom time</option>
-              </select>
-            </div>
-
-            {isCustomDeliveryTime ? (
               <div className="field">
-                <label htmlFor="customDeliveryTime">Custom time</label>
-                <select
-                  id="customDeliveryTime"
-                  onChange={(event) =>
-                    updatePreference("deliveryTime", event.target.value)
-                  }
-                  value={preferences.deliveryTime}
-                >
-                  {CUSTOM_DELIVERY_TIMES.map((time) => (
-                    <option key={time} value={time}>
-                      {time}
-                    </option>
+                <span className="field-label">Maximum alerts per day</span>
+                <div className="chip-row" role="group" aria-label="Maximum alerts per day">
+                  {ALERT_CAP_OPTIONS.map((cap) => (
+                    <button
+                      className={`chip ${
+                        preferences.maxAlertsPerDay === cap ? "selected" : ""
+                      }`}
+                      key={cap}
+                      onClick={() => updatePreference("maxAlertsPerDay", cap)}
+                      type="button"
+                    >
+                      {cap}
+                    </button>
                   ))}
+                  <button
+                    className={`chip ${
+                      preferences.maxAlertsPerDay === 25 ? "selected" : ""
+                    }`}
+                    onClick={() => updatePreference("maxAlertsPerDay", 25)}
+                    type="button"
+                  >
+                    No limit
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="delivery-time-grid">
+              <div className="field">
+                <label htmlFor="deliveryTime">Preferred delivery time</label>
+                <select
+                  id="deliveryTime"
+                  onChange={(event) => {
+                    const nextTime = event.target.value;
+
+                    updatePreference(
+                      "deliveryTime",
+                      nextTime === "custom" ? "09:00" : nextTime,
+                    );
+                  }}
+                  value={isCustomDeliveryTime ? "custom" : preferences.deliveryTime}
+                >
+                  <option value="08:00">8:00 AM - morning briefing</option>
+                  <option value="12:00">12:00 PM - lunch digest</option>
+                  <option value="18:00">6:00 PM - evening wrap-up</option>
+                  <option value="custom">Custom time</option>
                 </select>
               </div>
-            ) : null}
-          </div>
+
+              {isCustomDeliveryTime ? (
+                <div className="field">
+                  <label htmlFor="customDeliveryTime">Custom time</label>
+                  <select
+                    id="customDeliveryTime"
+                    onChange={(event) =>
+                      updatePreference("deliveryTime", event.target.value)
+                    }
+                    value={preferences.deliveryTime}
+                  >
+                    {CUSTOM_DELIVERY_TIMES.map((time) => (
+                      <option key={time} value={time}>
+                        {time}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : null}
+            </div>
+          )}
 
           {authError ? <p className="auth-message error">{authError}</p> : null}
 
@@ -855,8 +910,11 @@ export function CompletePage() {
             <div className="confirm-row">
               <span className="ck">Delivery</span>
               <span className="cv">
-                {selectedCadence?.label ?? "Daily"} digest at{" "}
-                {preferences.deliveryTime}
+                {preferences.deliveryMode === "realtime"
+                  ? `As-it-happens alerts, max ${preferences.maxAlertsPerDay} per day`
+                  : `${selectedCadence?.label ?? "Daily"} digest at ${
+                      preferences.deliveryTime
+                    }`}
               </span>
             </div>
             <div className="confirm-row">
@@ -923,7 +981,9 @@ export function DashboardPage() {
 
       const { data: storedPreferences, error: preferencesError } = await supabase
         .from("user_preferences")
-        .select("categories,cadence,delivery_time,timezone")
+        .select(
+          "categories,cadence,delivery_mode,delivery_time,max_alerts_per_day,timezone",
+        )
         .eq("user_id", user.id)
         .maybeSingle();
 
@@ -951,12 +1011,22 @@ export function DashboardPage() {
 
       if (savedPreferences?.cadence) {
         nextPreferences.cadence = savedPreferences.cadence;
+        nextPreferences.deliveryMode =
+          savedPreferences.cadence === "breaking" ? "realtime" : "scheduled";
+      }
+
+      if (savedPreferences?.delivery_mode) {
+        nextPreferences.deliveryMode = savedPreferences.delivery_mode;
       }
 
       if (savedPreferences?.delivery_time) {
         nextPreferences.deliveryTime = getDeliveryTime(
           savedPreferences.delivery_time,
         );
+      }
+
+      if (savedPreferences?.max_alerts_per_day) {
+        nextPreferences.maxAlertsPerDay = savedPreferences.max_alerts_per_day;
       }
 
       if (savedPreferences?.timezone) {
@@ -1030,8 +1100,16 @@ export function DashboardPage() {
                 <span className="cv">{selectedCadence?.label ?? "Daily"}</span>
               </div>
               <div className="confirm-row">
-                <span className="ck">Delivery time</span>
-                <span className="cv">{preferences.deliveryTime}</span>
+                <span className="ck">
+                  {preferences.deliveryMode === "realtime"
+                    ? "Alert cap"
+                    : "Delivery time"}
+                </span>
+                <span className="cv">
+                  {preferences.deliveryMode === "realtime"
+                    ? `${preferences.maxAlertsPerDay} per day`
+                    : preferences.deliveryTime}
+                </span>
               </div>
               <div className="confirm-row">
                 <span className="ck">Timezone</span>
