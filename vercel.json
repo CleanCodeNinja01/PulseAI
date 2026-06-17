@@ -3,6 +3,14 @@
     {
       "path": "/api/jobs/ingest-content",
       "schedule": "0 6 * * *"
+    },
+    {
+      "path": "/api/jobs/summarize-content",
+      "schedule": "30 6 * * *"
+    },
+    {
+      "path": "/api/jobs/deliver-digests",
+      "schedule": "0 * * * *"
     }
   ]
 }

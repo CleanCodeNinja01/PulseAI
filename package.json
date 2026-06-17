@@ -8,11 +8,13 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.104.2",
     "@supabase/supabase-js": "^2.108.1",
     "fast-xml-parser": "^5.9.1",
     "next": "^16.2.9",
     "react": "^19.2.7",
-    "react-dom": "^19.2.7"
+    "react-dom": "^19.2.7",
+    "resend": "^6.12.4"
   },
   "devDependencies": {
     "@types/node": "^25.9.3",

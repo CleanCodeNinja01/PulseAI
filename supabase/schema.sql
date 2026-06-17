@@ -2,6 +2,9 @@ create table if not exists public.users (
   id uuid primary key references auth.users(id) on delete cascade,
   email text not null,
   full_name text,
+  email_unsubscribe_token text not null default replace(gen_random_uuid()::text, '-', ''),
+  email_unsubscribed_at timestamptz,
+  last_digest_sent_at timestamptz,
   options jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -39,8 +42,53 @@ create table if not exists public.articles (
     check (source_type in ('arxiv', 'rss', 'news'))
 );
 
+create table if not exists public.article_summaries (
+  id uuid primary key default gen_random_uuid(),
+  article_id uuid not null references public.articles(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  interest_categories text[] not null default '{}'::text[],
+  summary text not null,
+  why_this_matters text not null,
+  model text not null,
+  prompt_version text not null default 'phase-3-v1',
+  input_tokens integer,
+  output_tokens integer,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint article_summaries_token_check
+    check (
+      (input_tokens is null or input_tokens >= 0)
+      and (output_tokens is null or output_tokens >= 0)
+    )
+);
+
+create table if not exists public.user_article_reads (
+  user_id uuid not null references auth.users(id) on delete cascade,
+  article_id uuid not null references public.articles(id) on delete cascade,
+  summary_id uuid references public.article_summaries(id) on delete set null,
+  status text not null default 'summarized',
+  first_seen_at timestamptz not null default now(),
+  summarized_at timestamptz,
+  delivered_at timestamptz,
+  read_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  primary key (user_id, article_id),
+  constraint user_article_reads_status_check
+    check (status in ('queued', 'summarized', 'delivered', 'read', 'skipped'))
+);
+
+alter table public.users
+  add column if not exists email_unsubscribe_token text
+    not null default replace(gen_random_uuid()::text, '-', ''),
+  add column if not exists email_unsubscribed_at timestamptz,
+  add column if not exists last_digest_sent_at timestamptz;
+
 create unique index if not exists users_email_unique_idx
   on public.users (lower(email));
+
+create unique index if not exists users_email_unsubscribe_token_unique_idx
+  on public.users (email_unsubscribe_token);
 
 create unique index if not exists users_full_name_unique_idx
   on public.users (lower(full_name))
@@ -59,9 +107,26 @@ create index if not exists articles_published_at_idx
 create index if not exists articles_categories_idx
   on public.articles using gin (categories);
 
+create unique index if not exists article_summaries_user_article_unique_idx
+  on public.article_summaries (user_id, article_id);
+
+create index if not exists article_summaries_article_id_idx
+  on public.article_summaries (article_id);
+
+create index if not exists article_summaries_user_id_idx
+  on public.article_summaries (user_id);
+
+create index if not exists user_article_reads_status_idx
+  on public.user_article_reads (user_id, status);
+
+create index if not exists user_article_reads_article_id_idx
+  on public.user_article_reads (article_id);
+
 alter table public.users enable row level security;
 alter table public.user_preferences enable row level security;
 alter table public.articles enable row level security;
+alter table public.article_summaries enable row level security;
+alter table public.user_article_reads enable row level security;
 
 drop policy if exists "Users can read their own profile" on public.users;
 drop policy if exists "Users can insert their own profile" on public.users;
@@ -70,6 +135,8 @@ drop policy if exists "Users can read their own preferences" on public.user_pref
 drop policy if exists "Users can insert their own preferences" on public.user_preferences;
 drop policy if exists "Users can update their own preferences" on public.user_preferences;
 drop policy if exists "Authenticated users can read articles" on public.articles;
+drop policy if exists "Users can read their own article summaries" on public.article_summaries;
+drop policy if exists "Users can read their own article read state" on public.user_article_reads;
 
 create policy "Users can read their own profile"
   on public.users
@@ -114,6 +181,18 @@ create policy "Authenticated users can read articles"
   for select
   to authenticated
   using (true);
+
+create policy "Users can read their own article summaries"
+  on public.article_summaries
+  for select
+  to authenticated
+  using (auth.uid() = user_id);
+
+create policy "Users can read their own article read state"
+  on public.user_article_reads
+  for select
+  to authenticated
+  using (auth.uid() = user_id);
 
 create or replace function public.handle_new_user()
 returns trigger
