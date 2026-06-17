@@ -881,6 +881,7 @@ export function CompletePage() {
 }
 
 export function DashboardPage() {
+  const router = useRouter();
   const { isReady, mergePreferences, preferences } = useStoredPreferenceState();
   const { selectedCadence, selectedCategoryLabels } =
     useSelectedPreferenceLabels(preferences);
@@ -975,6 +976,15 @@ export function DashboardPage() {
     return <LoadingCard label="Loading dashboard..." />;
   }
 
+  function goBack() {
+    if (window.history.length > 1) {
+      router.back();
+      return;
+    }
+
+    router.push("/onboarding/complete");
+  }
+
   return (
     <ProtectedRoute>
       <OnboardingShell step="dashboard">
@@ -1030,9 +1040,13 @@ export function DashboardPage() {
             </div>
           </div>
 
-          <Link className="btn-ghost dashboard-back-button" href="/onboarding/complete">
+          <button
+            className="btn-ghost dashboard-back-button"
+            onClick={goBack}
+            type="button"
+          >
             Back
-          </Link>
+          </button>
         </div>
       </OnboardingShell>
     </ProtectedRoute>
