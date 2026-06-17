@@ -27,7 +27,12 @@ export async function GET(request: Request) {
     );
   }
 
-  for (const envName of ["RESEND_API_KEY", "DIGEST_FROM_EMAIL", "APP_URL"]) {
+  for (const envName of [
+    "MAILJET_API_KEY",
+    "MAILJET_SECRET_KEY",
+    "DIGEST_FROM_EMAIL",
+    "APP_URL",
+  ]) {
     if (!process.env[envName]) {
       return NextResponse.json(
         { error: `${envName} is not configured.`, ok: false },

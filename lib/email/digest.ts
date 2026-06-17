@@ -1,5 +1,5 @@
 import "server-only";
-import { Resend } from "resend";
+import Mailjet from "node-mailjet";
 import { supabaseAdmin } from "@/lib/supabase-server";
 
 type UserPreferenceRow = {
@@ -48,6 +48,33 @@ type DigestItem = {
   summary: SummaryRow;
 };
 
+type MailjetRecipient = {
+  Email?: string;
+  MessageID?: number | string;
+  MessageUUID?: string;
+};
+
+type MailjetMessage = {
+  Errors?: { ErrorMessage?: string; ErrorRelatedTo?: string[] }[];
+  Status?: string;
+  To?: MailjetRecipient[];
+};
+
+type MailjetSendResponse = {
+  body?: {
+    Messages?: MailjetMessage[];
+  };
+};
+
+export type EmailDeliveryAttempt = {
+  itemCount: number;
+  mailjetMessageIds: string[];
+  mailjetMessageUuids: string[];
+  recipient: string;
+  status: string;
+  userId: string;
+};
+
 export type EmailDeliveryResult = {
   usersScanned: number;
   dueUsers: number;
@@ -56,16 +83,18 @@ export type EmailDeliveryResult = {
   skipped: number;
   failed: number;
   errors: string[];
+  deliveries: EmailDeliveryAttempt[];
 };
 
-function getResendClient() {
-  const apiKey = process.env.RESEND_API_KEY;
+function getMailjetClient() {
+  const apiKey = process.env.MAILJET_API_KEY;
+  const secretKey = process.env.MAILJET_SECRET_KEY;
 
-  if (!apiKey) {
-    throw new Error("RESEND_API_KEY is not configured.");
+  if (!apiKey || !secretKey) {
+    throw new Error("MAILJET_API_KEY or MAILJET_SECRET_KEY is not configured.");
   }
 
-  return new Resend(apiKey);
+  return Mailjet.apiConnect(apiKey, secretKey);
 }
 
 function getRequiredEnv(name: string) {
@@ -97,6 +126,15 @@ function escapeHtml(value: string) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
+}
+
+function cleanDigestText(value: string) {
+  return value
+    .replace(/^#+\s*(summary|why this matters)\s*:?\s*/gim, "")
+    .replace(/^(summary|why this matters)\s*:?\s*/gim, "")
+    .replace(/\*\*(summary|why this matters)\*\*\s*:?\s*/gim, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function getLocalTime(timeZone: string) {
@@ -167,41 +205,71 @@ function getUnsubscribeUrl(user: UserRow) {
 function renderDigestHtml(user: UserRow, items: DigestItem[]) {
   const unsubscribeUrl = getUnsubscribeUrl(user);
   const displayName = user.full_name ?? "there";
+  const preheader = `${items.length} AI updates selected for your interests.`;
   const itemHtml = items
     .map(
-      ({ article, summary }) => `
-        <article style="border-top:1px solid #e5e7eb;padding:24px 0;">
-          <p style="margin:0 0 8px;color:#6b7280;font-size:13px;">${escapeHtml(
-            article.source,
-          )}</p>
-          <h2 style="margin:0 0 12px;font-size:20px;line-height:1.3;">
-            <a href="${escapeHtml(article.url)}" style="color:#111827;text-decoration:none;">${escapeHtml(
-              article.title,
-            )}</a>
-          </h2>
-          <p style="margin:0 0 12px;color:#111827;line-height:1.6;">${escapeHtml(
-            summary.summary,
-          )}</p>
-          <p style="margin:0;color:#374151;line-height:1.6;"><strong>Why this matters:</strong> ${escapeHtml(
-            summary.why_this_matters,
-          )}</p>
-        </article>`,
+      ({ article, summary }, index) => {
+        const cleanSummary = cleanDigestText(summary.summary);
+        const cleanInsight = cleanDigestText(summary.why_this_matters);
+
+        return `
+          <article style="background:#ffffff;border:1px solid #e5e7eb;border-radius:20px;margin:0 0 18px;padding:24px;">
+            <div style="margin:0 0 14px;">
+              <span style="background:#f3e8ff;border-radius:999px;color:#7c3aed;display:inline-block;font-size:12px;font-weight:700;letter-spacing:.04em;padding:6px 10px;text-transform:uppercase;">${escapeHtml(
+                article.source,
+              )}</span>
+              <span style="color:#9ca3af;font-size:12px;margin-left:8px;">Update ${index + 1} of ${
+                items.length
+              }</span>
+            </div>
+            <h2 style="color:#111827;font-size:22px;line-height:1.25;margin:0 0 12px;">
+              <a href="${escapeHtml(article.url)}" style="color:#111827;text-decoration:none;">${escapeHtml(
+                article.title,
+              )}</a>
+            </h2>
+            <p style="color:#374151;font-size:15px;line-height:1.7;margin:0 0 16px;">${escapeHtml(
+              cleanSummary,
+            )}</p>
+            <div style="background:#f9fafb;border-left:4px solid #8b5cf6;border-radius:14px;padding:14px 16px;">
+              <p style="color:#111827;font-size:13px;font-weight:700;letter-spacing:.03em;margin:0 0 6px;text-transform:uppercase;">Why this matters</p>
+              <p style="color:#4b5563;font-size:14px;line-height:1.7;margin:0;">${escapeHtml(
+                cleanInsight,
+              )}</p>
+            </div>
+            <p style="margin:18px 0 0;">
+              <a href="${escapeHtml(
+                article.url,
+              )}" style="background:#111827;border-radius:999px;color:#ffffff;display:inline-block;font-size:14px;font-weight:700;padding:10px 16px;text-decoration:none;">Read source</a>
+            </p>
+          </article>`;
+      },
     )
     .join("");
 
   return `
-    <main style="font-family:Inter,Arial,sans-serif;background:#f9fafb;padding:32px;">
-      <section style="max-width:680px;margin:0 auto;background:#ffffff;border-radius:24px;padding:32px;">
-        <p style="margin:0 0 8px;color:#7c3aed;font-weight:700;">PulseAI</p>
-        <h1 style="margin:0 0 12px;font-size:28px;line-height:1.2;color:#111827;">Your AI digest</h1>
-        <p style="margin:0 0 24px;color:#4b5563;line-height:1.6;">Hi ${escapeHtml(
-          displayName,
-        )}, here are the most relevant updates based on your interests.</p>
-        ${itemHtml}
-        <p style="border-top:1px solid #e5e7eb;margin:24px 0 0;padding-top:20px;color:#6b7280;font-size:12px;line-height:1.5;">
-          You are receiving this because you signed up for PulseAI digests.
-          <a href="${escapeHtml(unsubscribeUrl)}" style="color:#6b7280;">Unsubscribe</a>
-        </p>
+    <div style="display:none;max-height:0;overflow:hidden;opacity:0;">${escapeHtml(
+      preheader,
+    )}</div>
+    <main style="background:#f5f3ff;font-family:Inter,Arial,sans-serif;margin:0;padding:32px 16px;">
+      <section style="margin:0 auto;max-width:700px;">
+        <div style="background:linear-gradient(135deg,#111827,#4c1d95);border-radius:28px 28px 0 0;padding:34px 32px;">
+          <p style="color:#c4b5fd;font-size:13px;font-weight:800;letter-spacing:.12em;margin:0 0 10px;text-transform:uppercase;">PulseAI digest</p>
+          <h1 style="color:#ffffff;font-size:32px;line-height:1.15;margin:0 0 12px;">Your AI updates are ready</h1>
+          <p style="color:#ddd6fe;font-size:16px;line-height:1.6;margin:0;">Hi ${escapeHtml(
+            displayName,
+          )}, here are ${items.length} relevant AI updates selected for your interests.</p>
+        </div>
+        <div style="background:#f9fafb;border:1px solid #e5e7eb;border-top:0;padding:24px;">
+          ${itemHtml}
+        </div>
+        <div style="background:#ffffff;border:1px solid #e5e7eb;border-radius:0 0 28px 28px;border-top:0;padding:22px 28px;text-align:center;">
+          <p style="color:#6b7280;font-size:12px;line-height:1.6;margin:0 0 8px;">
+            You are receiving this because you signed up for PulseAI digests.
+          </p>
+          <p style="color:#6b7280;font-size:12px;line-height:1.6;margin:0;">
+            <a href="${escapeHtml(unsubscribeUrl)}" style="color:#6d28d9;text-decoration:underline;">Unsubscribe</a>
+          </p>
+        </div>
       </section>
     </main>`;
 }
@@ -211,11 +279,29 @@ function renderDigestText(user: UserRow, items: DigestItem[]) {
   const itemText = items
     .map(
       ({ article, summary }) =>
-        `${article.title}\n${article.url}\n\n${summary.summary}\n\nWhy this matters: ${summary.why_this_matters}`,
+        `${article.title}\n${article.url}\n\n${cleanDigestText(
+          summary.summary,
+        )}\n\nWhy this matters: ${cleanDigestText(summary.why_this_matters)}`,
     )
     .join("\n\n---\n\n");
 
   return `PulseAI digest for ${user.full_name ?? user.email}\n\n${itemText}\n\nUnsubscribe: ${unsubscribeUrl}`;
+}
+
+function parseEmailAddress(value: string) {
+  const match = value.match(/^(.+?)\s*<([^>]+)>$/);
+
+  if (!match) {
+    return {
+      email: value,
+      name: "PulseAI",
+    };
+  }
+
+  return {
+    email: match[2].trim(),
+    name: match[1].replace(/^"|"$/g, "").trim(),
+  };
 }
 
 async function getDueDigestUsers(limit: number) {
@@ -360,25 +446,73 @@ async function markDigestDelivered(userId: string, items: DigestItem[]) {
   }
 }
 
-async function sendDigest(user: UserRow, items: DigestItem[]) {
-  const resend = getResendClient();
-  const from = getRequiredEnv("DIGEST_FROM_EMAIL");
+async function sendDigest(
+  user: UserRow,
+  items: DigestItem[],
+): Promise<EmailDeliveryAttempt> {
+  const mailjet = getMailjetClient();
+  const from = parseEmailAddress(getRequiredEnv("DIGEST_FROM_EMAIL"));
+  const unsubscribeUrl = getUnsubscribeUrl(user);
   const subject =
     items.length === 1
       ? "Your PulseAI digest: 1 update"
       : `Your PulseAI digest: ${items.length} updates`;
 
-  const { error } = await resend.emails.send({
-    from,
-    html: renderDigestHtml(user, items),
-    subject,
-    text: renderDigestText(user, items),
-    to: user.email,
-  });
+  const response = (await mailjet.post("send", { version: "v3.1" }).request({
+    Messages: [
+      {
+        From: {
+          Email: from.email,
+          Name: from.name,
+        },
+        CustomCampaign: "pulseai-digest",
+        DeduplicateCampaign: false,
+        Headers: {
+          "List-Unsubscribe": `<${unsubscribeUrl}>`,
+          "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+        },
+        HTMLPart: renderDigestHtml(user, items),
+        Subject: subject,
+        TextPart: renderDigestText(user, items),
+        To: [
+          {
+            Email: user.email,
+            Name: user.full_name ?? user.email,
+          },
+        ],
+      },
+    ],
+  })) as MailjetSendResponse;
+  const message = response.body?.Messages?.[0];
+  const status = message?.Status ?? "unknown";
+  const errors = message?.Errors ?? [];
 
-  if (error) {
-    throw new Error(error.message);
+  if (errors.length > 0 || !["success", "queued"].includes(status.toLowerCase())) {
+    const errorMessages = errors
+      .map((error) => error.ErrorMessage)
+      .filter(Boolean)
+      .join("; ");
+
+    throw new Error(
+      `Mailjet send failed with status "${status}"${
+        errorMessages ? `: ${errorMessages}` : ""
+      }`,
+    );
   }
+
+  return {
+    itemCount: items.length,
+    mailjetMessageIds:
+      message?.To?.map((recipient) => recipient.MessageID)
+        .filter((id): id is number | string => Boolean(id))
+        .map(String) ?? [],
+    mailjetMessageUuids:
+      message?.To?.map((recipient) => recipient.MessageUUID)
+        .filter((id): id is string => Boolean(id)) ?? [],
+    recipient: user.email,
+    status,
+    userId: user.id,
+  };
 }
 
 export async function deliverDueDigests(): Promise<EmailDeliveryResult> {
@@ -386,6 +520,7 @@ export async function deliverDueDigests(): Promise<EmailDeliveryResult> {
     dueUsers: 0,
     emailsSent: 0,
     errors: [],
+    deliveries: [],
     failed: 0,
     skipped: 0,
     summariesDelivered: 0,
@@ -406,9 +541,10 @@ export async function deliverDueDigests(): Promise<EmailDeliveryResult> {
         continue;
       }
 
-      await sendDigest(user, items);
+      const delivery = await sendDigest(user, items);
       await markDigestDelivered(user.id, items);
 
+      result.deliveries.push(delivery);
       result.emailsSent += 1;
       result.summariesDelivered += items.length;
     } catch (error) {

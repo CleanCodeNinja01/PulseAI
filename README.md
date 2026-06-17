@@ -4,7 +4,7 @@ Your personal AI research digest - curated, summarized, and delivered on your sc
 Phase 1 — User onboarding & preferences is where users select AI categories (NLP, robotics, security, etc.) and set their delivery cadence. This data drives everything downstream.
 Phase 2 — Content pipeline involves fetching AI news from sources like arXiv, RSS feeds, and news APIs, then filtering by the user's selected categories.
 Phase 3 — AI summarization uses Claude (or another LLM) to condense each article and generate a personalized "why this matters" insight tailored to the user's interests.
-Phase 4 — Email automation assembles the digest and sends it on the user's chosen schedule via a service like SendGrid or Resend.
+Phase 4 — Email automation assembles the digest and sends it on the user's chosen schedule via Mailjet.
 Phase 5 — Scalability means using job queues and background workers so thousands of users can get personalized digests without bottlenecks.
 
 ## Phase 1 App
@@ -151,14 +151,14 @@ Implementation steps:
    - `public.users.email_unsubscribed_at` stops future digest delivery.
    - `public.users.last_digest_sent_at` powers cadence checks.
 2. Add email provider configuration.
-   - `RESEND_API_KEY` is the server-only provider key.
+   - `MAILJET_API_KEY` and `MAILJET_SECRET_KEY` are the server-only provider keys.
    - `DIGEST_FROM_EMAIL` is the verified sender address.
    - `APP_URL` is used to build unsubscribe URLs.
 3. Create the digest delivery helper.
    - Implemented file: `lib/email/digest.ts`.
    - It loads users and preferences, checks cadence and local delivery time,
      fetches `user_article_reads.status = summarized`, builds HTML/text email,
-     sends through Resend, then marks rows as `delivered`.
+     sends through Mailjet, then marks rows as `delivered`.
 4. Create a protected delivery job route.
    - Implemented route: `GET /api/jobs/deliver-digests`.
    - Protect it with `Authorization: Bearer $CRON_SECRET`.
@@ -177,6 +177,9 @@ To test email delivery locally:
 curl -H "Authorization: Bearer $CRON_SECRET" \
   http://localhost:3000/api/jobs/deliver-digests
 ```
+
+The response includes a `deliveries` array with Mailjet status and message IDs
+for each attempted email.
 
 For safer local testing, set `EMAIL_DELIVERY_MAX_USERS` and
 `EMAIL_DIGEST_MAX_ITEMS` to low values like `1` and `2`.
@@ -197,20 +200,20 @@ For safer local testing, set `EMAIL_DELIVERY_MAX_USERS` and
 12. Phase 3 plan: summarization flow is documented but not implemented yet.
 13. Phase 3 Claude client: `lib/summarization/claude.ts` is implemented as a server-only wrapper.
 14. Phase 3 summarization route: `/api/jobs/summarize-content` matches unread articles, calls Claude in batches, stores summaries, and marks user article state.
-15. Phase 4 email delivery: `/api/jobs/deliver-digests` sends due digest emails through Resend and marks items as delivered.
+15. Phase 4 email delivery: `/api/jobs/deliver-digests` sends due digest emails through Mailjet and marks items as delivered.
 16. Phase 4 unsubscribe route: `/api/unsubscribe` disables future digest emails with a per-user token.
 
 ## Missing Flow / Next Steps
 
 1. Apply `supabase/schema.sql` in the Supabase SQL Editor after every schema change.
-2. Add production environment variables in Vercel: `SUPABASE_SERVICE_ROLE_KEY`, `CRON_SECRET`, `ANTHROPIC_API_KEY`, `RESEND_API_KEY`, `DIGEST_FROM_EMAIL`, `APP_URL`, and optionally `NEWS_API_KEY`.
+2. Add production environment variables in Vercel: `SUPABASE_SERVICE_ROLE_KEY`, `CRON_SECRET`, `ANTHROPIC_API_KEY`, `MAILJET_API_KEY`, `MAILJET_SECRET_KEY`, `DIGEST_FROM_EMAIL`, `APP_URL`, and optionally `NEWS_API_KEY`.
 3. Manually test the cron route once with `curl` and confirm rows are inserted into `public.articles`.
 4. Move preference loading fully from browser `localStorage` to Supabase so all onboarding state is database-backed.
 5. Add an articles dashboard or admin view to inspect ingested raw articles from the UI.
 6. Add category matching between `public.articles.categories` and `public.user_preferences.categories`.
 7. Add Phase 3 tables for summaries and per-user article delivery/read tracking.
 8. Test Phase 3 summarization with a real `ANTHROPIC_API_KEY` and low local limits.
-9. Test Phase 4 email delivery with a verified Resend sender and low local limits.
+9. Test Phase 4 email delivery with a verified Mailjet sender and low local limits.
 10. Add observability for cron runs, including persisted job logs, source failures, and inserted/skipped counts.
 
 ## Getting Started
@@ -229,7 +232,8 @@ ANTHROPIC_MODEL=claude-haiku-4-5-20251001
 SUMMARIZATION_MAX_USERS=optional-local-user-limit
 SUMMARIZATION_MAX_ARTICLES_PER_USER=optional-local-article-limit
 SUMMARIZATION_BATCH_SIZE=optional-local-batch-size
-RESEND_API_KEY=phase-4-email-provider-key
+MAILJET_API_KEY=phase-4-mailjet-api-key
+MAILJET_SECRET_KEY=phase-4-mailjet-secret-key
 DIGEST_FROM_EMAIL=PulseAI <digest@your-domain.com>
 APP_URL=http://localhost:3000
 EMAIL_DELIVERY_MAX_USERS=optional-local-email-user-limit
