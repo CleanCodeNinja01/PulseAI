@@ -37,6 +37,37 @@ user finishes setup.
 Protected onboarding and dashboard routes use a client-side auth guard. Users
 who are not signed in are redirected to `/auth`.
 
+## Background Job Scheduling
+
+Vercel Hobby plans only allow daily cron jobs, so PulseAI does **not** use
+`vercel.json` crons. Schedule jobs with an external service such as
+[cron-job.org](https://console.cron-job.org/jobs/create).
+
+Every job route requires:
+
+```text
+Authorization: Bearer $CRON_SECRET
+```
+
+Suggested production schedule:
+
+| Job | Route | Suggested schedule |
+| --- | --- | --- |
+| Ingestion | `GET /api/jobs/ingest-content` | Daily at 6:00 AM UTC |
+| Summarization | `GET /api/jobs/summarize-content` | Daily at 6:30 AM UTC |
+| Breaking alerts | `GET /api/jobs/send-breaking-alerts` | Every 15 minutes |
+| Digest delivery | `GET /api/jobs/deliver-digests` | Hourly |
+
+Example cron-job.org setup for breaking alerts:
+
+1. URL: `https://your-vercel-domain.com/api/jobs/send-breaking-alerts`
+2. Method: `GET`
+3. Header: `Authorization: Bearer YOUR_CRON_SECRET`
+4. Schedule: every 15 minutes
+
+Alias route: `GET /api/cron/ingest` re-exports the ingestion job for external
+schedulers that expect a `/api/cron/*` path.
+
 ## Phase 2 Content Ingestion
 
 Phase 2 adds a protected background ingestion endpoint at
@@ -47,12 +78,12 @@ Phase 2 adds a protected background ingestion endpoint at
 - NewsAPI when `NEWS_API_KEY` is configured
 
 Every source is normalized into a common article shape, deduplicated by
-canonical URL hash and DOI hash, then stored in `public.articles`. The Vercel
-cron in `vercel.json` runs the job daily at 6 AM UTC.
+canonical URL hash and DOI hash, then stored in `public.articles`. Schedule the
+job daily through cron-job.org or another external scheduler.
 
 Implemented ingestion flow:
 
-1. Vercel cron calls `/api/jobs/ingest-content`.
+1. External scheduler calls `/api/jobs/ingest-content`.
 2. The route checks `Authorization: Bearer $CRON_SECRET`.
 3. The job fetches articles from arXiv, RSS feeds, and optional NewsAPI.
 4. Each source payload is converted into a shared raw article shape.
@@ -126,8 +157,7 @@ GET /api/jobs/summarize-content
 Authorization: Bearer $CRON_SECRET
 ```
 
-This route should run after ingestion. In production it can be a second Vercel
-cron or part of a queue-based worker later.
+This route should run after ingestion via your external scheduler.
 
 To test summarization locally:
 
@@ -167,11 +197,30 @@ Implementation steps:
    - Implemented page: `GET /unsubscribe?token=...`.
    - API fallback: `GET /api/unsubscribe?token=...`.
    - Every digest email includes this link.
-6. Schedule delivery.
-   - `vercel.json` runs ingestion daily, summarization after ingestion, and
-     delivery hourly.
-   - The hourly delivery route only sends when a user is due based on cadence,
-     delivery time, and unsubscribe status.
+6. Schedule delivery through cron-job.org.
+   - Run `/api/jobs/deliver-digests` hourly.
+   - The route only sends when a user is due based on cadence, delivery time,
+     and unsubscribe status.
+
+### Mailjet deliverability
+
+Emails can land in spam when the sender domain is not authenticated or when
+test content looks like bulk marketing.
+
+Before production sends:
+
+1. Verify your sender domain in Mailjet.
+2. Add DNS records for SPF, DKIM, and DMARC.
+3. Use a real From address such as `PulseAI <digest@your-domain.com>`.
+4. Confirm Gmail **Show original** reports `spf=pass`, `dkim=pass`, and
+   `dmarc=pass`.
+
+Common spam triggers in this project:
+
+- Unverified Mailjet sender domain
+- Alarmist subject lines like `Breaking AI alert: ...`
+- Test article URLs such as `example.com`
+- New sender reputation with no warm-up period
 
 To test email delivery locally:
 
@@ -185,6 +234,26 @@ for each attempted email.
 
 For safer local testing, set `EMAIL_DELIVERY_MAX_USERS` and
 `EMAIL_DIGEST_MAX_ITEMS` to low values like `1` and `2`.
+
+Scheduled digest test flow:
+
+1. Finish onboarding with at least one category selected.
+2. Choose **Daily** or **Weekly** and set delivery time to the current hour.
+3. Run ingestion, summarization, then delivery:
+
+```bash
+curl -H "Authorization: Bearer $CRON_SECRET" \
+  http://localhost:3000/api/jobs/ingest-content
+
+curl -H "Authorization: Bearer $CRON_SECRET" \
+  http://localhost:3000/api/jobs/summarize-content
+
+curl -H "Authorization: Bearer $CRON_SECRET" \
+  http://localhost:3000/api/jobs/deliver-digests
+```
+
+Selecting a category alone does not send email. The pipeline must ingest
+articles, summarize matching items, and then run the delivery job.
 
 ## Phase 5 Breaking AI Alerts
 
@@ -229,7 +298,16 @@ Implemented breaking-alert email job:
 7. It caps sends by `max_alerts_per_day`.
 8. It sends one short urgent Mailjet email per matched article.
 9. It upserts `public.user_article_reads` as `status = delivered` so the same breaking alert is not sent repeatedly.
-10. `vercel.json` schedules this route every 15 minutes.
+10. Schedule this route every 15 minutes through cron-job.org.
+
+Immediate alert requirements:
+
+- `user_preferences.delivery_mode = 'realtime'`
+- `user_preferences.breaking_alerts_enabled = true`
+- `user_preferences.categories` contains the category id, e.g. `security`
+- `articles.is_breaking = true`
+- `articles.importance_score >= alert_threshold` (default `8`)
+- article `categories` must include the same category id
 
 To test breaking alerts locally:
 
@@ -240,6 +318,65 @@ curl -H "Authorization: Bearer $CRON_SECRET" \
 
 For safer local testing, set `BREAKING_ALERT_MAX_USERS` and
 `BREAKING_ALERT_MAX_ARTICLES_PER_USER` to low values like `1` and `1`.
+
+### Test immediate alerts in Supabase
+
+Check your preferences:
+
+```sql
+select
+  user_id,
+  categories,
+  cadence,
+  delivery_mode,
+  breaking_alerts_enabled,
+  alert_threshold
+from public.user_preferences;
+```
+
+Insert a test breaking article for the `security` category:
+
+```sql
+insert into public.articles (
+  source,
+  source_type,
+  title,
+  url,
+  abstract,
+  categories,
+  importance_score,
+  is_breaking,
+  breaking_reason,
+  matched_entities,
+  published_at,
+  url_hash
+)
+values (
+  'PulseAI Test Feed',
+  'news',
+  'Major AI security incident affects enterprise deployments',
+  'https://example.com/test-security-breaking-alert',
+  'Researchers disclosed a critical AI security vulnerability affecting model serving pipelines.',
+  array['security'],
+  9,
+  true,
+  'This is a major AI security update relevant to users following security topics.',
+  array['security', 'enterprise ai'],
+  now(),
+  md5('https://example.com/test-security-breaking-alert')
+);
+```
+
+If an alert was already sent, clear the read state before retesting:
+
+```sql
+delete from public.user_article_reads
+where user_id = 'YOUR_USER_ID_HERE'
+  and article_id = 'YOUR_ARTICLE_ID_HERE';
+```
+
+Category ids must match onboarding ids exactly, such as `security`, `llms`,
+`generative-ai`, and `agents`.
 
 Next Phase 5 steps:
 
@@ -260,31 +397,29 @@ Next Phase 5 steps:
 9. Phase 2 fetchers: arXiv, RSS, and optional NewsAPI fetchers are implemented.
 10. Phase 2 dedupe: canonical URL and DOI hashes prevent duplicate article storage.
 11. Cron job: `/api/jobs/ingest-content` runs the ingestion job behind `CRON_SECRET`.
-12. Phase 3 plan: summarization flow is documented but not implemented yet.
-13. Phase 3 Claude client: `lib/summarization/claude.ts` is implemented as a server-only wrapper.
-14. Phase 3 summarization route: `/api/jobs/summarize-content` matches unread articles, calls Claude in batches, stores summaries, and marks user article state.
-15. Phase 4 email delivery: `/api/jobs/deliver-digests` sends due digest emails through Mailjet and marks items as delivered.
-16. Phase 4 unsubscribe page: `/unsubscribe` disables future digest and alert emails with a per-user token.
-17. Phase 5 alert metadata: `public.articles` now stores importance score, breaking flag, breaking reason, and matched entities.
-18. Phase 5 alert preferences: `public.user_preferences` now stores breaking alert opt-in, alert threshold, and watchlist keywords.
-19. Phase 5 classifier helper: `lib/classification/claude.ts` can classify articles for breaking-alert metadata.
-20. Phase 5 breaking alert route: `/api/jobs/send-breaking-alerts` sends urgent emails for high-importance matching articles.
-21. Schedule UX: “As it happens” switches from a time picker to an immediate-alert explainer and max-alerts-per-day control.
+12. Phase 3 Claude client: `lib/summarization/claude.ts` is implemented as a server-only wrapper.
+13. Phase 3 summarization route: `/api/jobs/summarize-content` matches unread articles, calls Claude in batches, stores summaries, and marks user article state.
+14. Phase 4 email delivery: `/api/jobs/deliver-digests` sends due digest emails through Mailjet and marks items as delivered.
+15. Phase 4 unsubscribe page: `/unsubscribe` disables future digest and alert emails with a per-user token.
+16. Phase 5 alert metadata: `public.articles` now stores importance score, breaking flag, breaking reason, and matched entities.
+17. Phase 5 alert preferences: `public.user_preferences` now stores breaking alert opt-in, alert threshold, and watchlist keywords.
+18. Phase 5 classifier helper: `lib/classification/claude.ts` can classify articles for breaking-alert metadata.
+19. Phase 5 breaking alert route: `/api/jobs/send-breaking-alerts` sends urgent emails for high-importance matching articles.
+20. Schedule UX: “As it happens” switches from a time picker to an immediate-alert explainer and max-alerts-per-day control.
+21. Dashboard shortcut: users can jump from `/dashboard` to edit interests.
+22. External scheduling: background jobs are meant to run through cron-job.org instead of Vercel crons.
 
 ## Missing Flow / Next Steps
 
 1. Apply `supabase/schema.sql` in the Supabase SQL Editor after every schema change.
 2. Add production environment variables in Vercel: `SUPABASE_SERVICE_ROLE_KEY`, `CRON_SECRET`, `ANTHROPIC_API_KEY`, `MAILJET_API_KEY`, `MAILJET_SECRET_KEY`, `DIGEST_FROM_EMAIL`, `APP_URL`, and optionally `NEWS_API_KEY`.
-3. Manually test the cron route once with `curl` and confirm rows are inserted into `public.articles`.
-4. Move preference loading fully from browser `localStorage` to Supabase so all onboarding state is database-backed.
-5. Add an articles dashboard or admin view to inspect ingested raw articles from the UI.
-6. Add category matching between `public.articles.categories` and `public.user_preferences.categories`.
-7. Add Phase 3 tables for summaries and per-user article delivery/read tracking.
-8. Test Phase 3 summarization with a real `ANTHROPIC_API_KEY` and low local limits.
-9. Test Phase 4 email delivery with a verified Mailjet sender and low local limits.
-10. Implement Phase 5 classification job to populate article alert metadata.
-11. Wire onboarding/dashboard UI for breaking-alert preferences.
-12. Add observability for cron runs, including persisted job logs, source failures, and inserted/skipped counts.
+3. Configure cron-job.org jobs for ingestion, summarization, breaking alerts, and digest delivery.
+4. Verify Mailjet sender domain DNS (SPF, DKIM, DMARC) before production email sends.
+5. Manually test each job route once with `curl` and confirm expected database changes.
+6. Move preference loading fully from browser `localStorage` to Supabase so all onboarding state is database-backed.
+7. Add an articles dashboard or admin view to inspect ingested raw articles from the UI.
+8. Implement Phase 5 classification job to populate article alert metadata after ingestion.
+9. Add observability for cron runs, including persisted job logs, source failures, and inserted/skipped counts.
 
 ## Getting Started
 
@@ -321,11 +456,34 @@ npm run dev
 
 Then open [http://localhost:3000](http://localhost:3000).
 
-To test ingestion locally:
+### Local job testing
+
+Ingestion:
 
 ```bash
 curl -H "Authorization: Bearer $CRON_SECRET" \
   http://localhost:3000/api/jobs/ingest-content
+```
+
+Summarization:
+
+```bash
+curl -H "Authorization: Bearer $CRON_SECRET" \
+  http://localhost:3000/api/jobs/summarize-content
+```
+
+Digest delivery:
+
+```bash
+curl -H "Authorization: Bearer $CRON_SECRET" \
+  http://localhost:3000/api/jobs/deliver-digests
+```
+
+Breaking alerts:
+
+```bash
+curl -H "Authorization: Bearer $CRON_SECRET" \
+  http://localhost:3000/api/jobs/send-breaking-alerts
 ```
 
 In development, ingestion uses smaller source limits by default. Set
